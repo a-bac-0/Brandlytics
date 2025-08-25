@@ -1,8 +1,8 @@
 ---
-name: "📊 Especialista en Datos Task"
+name: "📊 Data Analyst"
 about: "Dataset creation and data processing tasks"
 title: "[ED] "
-labels: ["especialista-datos", "dataset", "preprocessing"]
+labels: ["data-specialist", "dataset", "preprocessing"]
 assignees: []
 ---
 
