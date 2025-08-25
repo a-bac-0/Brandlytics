@@ -26,8 +26,8 @@ MANIFEST
 *.pt
 
 # Data files
-data/raw/
-data/processed/
+!data/raw/.gitkeep
+!data/processed/.gitkeep
 *.mp4
 *.avi
 *.mov
