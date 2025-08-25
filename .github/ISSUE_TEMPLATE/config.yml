@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 💬 Team Discussion
+    url: https://github.com/your-username/your-repo/discussions
+    about: General project discussions and questions
+  - name: 📋 Project Board
+    url: https://github.com/users/a-bac-0/projects/2
+    about: View project progress and milestones
