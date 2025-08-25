@@ -1,8 +1,8 @@
 ---
-name: "🤖 Líder Técnico Task"
+name: "Tech Lead Task"
 about: "Model training and AI development tasks"
-title: "[LT] "
-labels: ["lider-tecnico", "model", "ai"]
+title: "[TL] "
+labels: ["tech-lead", "ai", "model"]
 assignees: []
 ---
 
