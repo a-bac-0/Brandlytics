@@ -22,14 +22,17 @@ MANIFEST
 
 # PyTorch
 *.pth
-*.pt
+
 
 # Data files
-data/*
+data/processed_yolo/
+data/annotations/
+
+
+# Excepciones para incluir imágenes en data/raw
 !data/raw/
-!data/processed/
-
-
+!data/raw/images/
+!data/raw/images/BrandDetection.v4-version4.yolov8/test/images/
 # Model files
 models/trained/
 models/pretrained/
