@@ -28,3 +28,6 @@ labelImg
 setuptools
 #Después iniciar poniendo en la terminal: labelImg
 ultralytics
+fastapi
+dotenv
+uvicorn

@@ -22,7 +22,7 @@ MANIFEST
 
 # PyTorch
 *.pth
-*.pt
+
 
 # Data files
 data/processed_yolo/
