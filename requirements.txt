@@ -23,7 +23,7 @@ pytest>=7.4.0
 black>=23.0.0
 flake8>=6.0.0
 pre-commit>=3.5.0
-
+ultralytics>=8.3.186
 labelImg  
 setuptools
 #Después iniciar poniendo en la terminal: labelImg

@@ -1,0 +1,7 @@
+# Rutas relativas a la carpeta donde ejecutas el script
+train: ../data/raw/images/BrandDetection.v4-version4.yolov8/train/labels
+val: ../data/raw/images/BrandDetection.v4-version4.yolov8/valid/labels
+
+# Número de clases y nombres
+nc: 2
+names: ['coca_cola', 'nike', 'starbucks']
