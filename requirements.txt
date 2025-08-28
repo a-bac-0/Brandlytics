@@ -34,3 +34,6 @@ uvicorn
 
 ## SUPABASE ##
 supabase
+
+## Video processing ##
+ffmpeg-python
