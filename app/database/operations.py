@@ -1,282 +1,198 @@
-import json
+import os
+import io
+import asyncio
 import logging
-from datetime import datetime
-from typing import List, Dict, Optional, Any
-from sqlalchemy.orm import Session
-from sqlalchemy import desc, func
-import cv2
-import numpy as np
 from pathlib import Path
+from typing import List, Dict, Optional, Union
+from datetime import datetime
 
-from .connection import DatabaseManager
-from .models import Video, Brand, Detection, AnalysisReport
+import numpy as np
+import av  # PyAV para abrir videos con FFmpeg
+from PIL import Image
+from supabase import create_client, Client
+from ultralytics import YOLO  # YOLOv8 oficial
+
+# ByteTrack
+from yolox.tracker.byte_tracker import BYTETracker
 
 logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
 
-class DetectionOperations:
-    """
-    Database operations for brand detection data
-    """
-    
-    def __init__(self, db_manager: DatabaseManager):
-        self.db_manager = db_manager
-        self._initialize_brands()
-    
-    def _initialize_brands(self):
-        """Initialize brand data in database"""
-        try:
-            with self.db_manager.get_session() as session:
-                # Check if brands exist
-                existing_brands = session.query(Brand).count()
-                
-                if existing_brands == 0:
-                    # Add default brands from config
-                    brands_config = self.db_manager.config.get('brands', [])
-                    for brand_config in brands_config:
-                        brand = Brand(
-                            id=brand_config['id'],
-                            name=brand_config['name'],
-                            color_r=brand_config['color'][0],
-                            color_g=brand_config['color'][1],
-                            color_b=brand_config['color'][2]
-                        )
-                        session.add(brand)
-                    
-                    session.commit()
-                    logger.info(f"Initialized {len(brands_config)} brands in database")
-                
-        except Exception as e:
-            logger.error(f"Failed to initialize brands: {e}")
-    
-    async def save_video_analysis(self, analysis_results: Dict, video_path: str, filename: str) -> int:
+# Variables de entorno
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+YOLO_MODEL_PATH = os.getenv("YOLO_MODEL_PATH", "yolov8n.pt")
+
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+
+class DetectionPipeline:
+    def __init__(self, tmp_dir: str = "tmp_frames"):
+        self.tmp_dir = Path(tmp_dir)
+        self.tmp_dir.mkdir(exist_ok=True)
+        self.model = YOLO(YOLO_MODEL_PATH)
+        self.tracker = BYTETracker(frame_rate=30)  # ajustable según tu FPS
+
+    async def process_source(
+        self,
+        source: Union[str, Path],
+        filename: Optional[str] = None,
+        max_frames: Optional[int] = None
+    ) -> List[Dict]:
+        """Procesa un video o imagen"""
+        filename = filename or f"video_{int(datetime.now().timestamp())}"
+        detections_all = []
+
+        # Imagen simple
+        if isinstance(source, Path) and source.suffix.lower() in [".jpg", ".jpeg", ".png"]:
+            pil_img = Image.open(source)
+            dets = await self._detect_frame(pil_img)
+            await self._save_detections(dets, filename, frame_number=1, timestamp=0.0)
+            return dets
+
+        # Video
+        container = await self._open_video(source)
+        stream = container.streams.video[0]
+        frame_count = 0
+
+        async for frame in self._frame_generator(container, stream, max_frames):
+            frame_count += 1
+            img_np = frame.to_ndarray(format='rgb24')
+            pil_img = Image.fromarray(img_np)
+
+            # Detección YOLO
+            dets = await self._detect_frame(pil_img)
+
+            # Tracking con ByteTrack
+            dets_tracked = self._track_detections(dets)
+
+            # Subir crops y guardar detecciones
+            for det in dets_tracked:
+                crop_img = pil_img.crop(det['bbox'])
+                crop_bytes = self._pil_to_bytes(crop_img)
+                crop_url = await self._upload_crop(crop_bytes, f"{filename}_{frame_count}_{det['brand_name']}.jpg")
+                det['crop_url'] = crop_url
+
+            # Guardar en DB detections y detection_events
+            await self._save_detections(dets_tracked, filename, frame_number=frame_count, timestamp=float(frame.time))
+
+            detections_all.append({
+                "frame_idx": frame_count,
+                "timestamp": float(frame.time),
+                "detections": dets_tracked
+            })
+
+        return detections_all
+
+    async def _open_video(self, source: Union[str, Path]):
+        return av.open(str(source))
+
+    async def _frame_generator(self, container, stream, max_frames=None):
+        for frame_idx, frame in enumerate(container.decode(stream)):
+            if max_frames and frame_idx >= max_frames:
+                break
+            yield frame
+
+    async def _detect_frame(self, pil_img: Image.Image) -> List[Dict]:
+        img_np = np.array(pil_img)
+        results = self.model(img_np)[0]
+        detections = []
+        for box, conf, cls in zip(results.boxes.xyxy, results.boxes.conf, results.boxes.cls):
+            x1, y1, x2, y2 = map(int, box.tolist())
+            detections.append({
+                "brand_name": self.model.names[int(cls)],
+                "bbox": (x1, y1, x2, y2),
+                "confidence": float(conf)
+            })
+        return detections
+
+    def _track_detections(self, detections: List[Dict]) -> List[Dict]:
+        """Aplica ByteTrack y devuelve detecciones con track_id"""
+        # Convertimos a formato requerido por ByteTrack
+        dets_array = np.array([
+            [det['bbox'][0], det['bbox'][1], det['bbox'][2], det['bbox'][3], det['confidence']]
+            for det in detections
+        ])
+        tracked = self.tracker.update(dets_array, img_shape=None)  # img_shape opcional
+        # Asignamos track_id a cada detección
+        for det, track in zip(detections, tracked):
+            det['track_id'] = track.track_id
+        return detections
+
+    def _pil_to_bytes(self, pil_img: Image.Image) -> bytes:
+        buf = io.BytesIO()
+        pil_img.save(buf, format='JPEG')
+        buf.seek(0)
+        return buf.read()
+
+    async def _upload_crop(self, img_bytes: bytes, filename: str) -> str:
+        bucket_name = "crops"
+        res = supabase.storage.from_(bucket_name).upload(filename, img_bytes, {"content-type": "image/jpeg"})
+        if res.get("error"):
+            logger.error(f"Error subiendo crop {filename}: {res['error']}")
+            return ""
+        public_url = supabase.storage.from_(bucket_name).get_public_url(filename)
+        return public_url.get("publicUrl", "")
+
+    async def _save_detections(self, detections: List[Dict], video_name: str, frame_number: int, timestamp: float):
+        """Guarda detecciones en la tabla 'detections' y agrupa eventos en 'detection_events'"""
+        for det in detections:
+            # Guardar detección individual
+            data = {
+                "video_name": video_name,
+                "frame_number": frame_number,
+                "timestamp_seconds": timestamp,
+                "brand_name": det['brand_name'],
+                "confidence": det['confidence'],
+                "bbox_x1": det['bbox'][0],
+                "bbox_y1": det['bbox'][1],
+                "bbox_x2": det['bbox'][2],
+                "bbox_y2": det['bbox'][3],
+                "image_crop_url": det.get('crop_url', None),
+                "detection_type": "video",
+                "track_id": det.get('track_id', None),
+                "fps": 30  # opcional, si sabes el FPS del video
+            }
+            supabase.table("detections").insert(data).execute()
+
+        # Actualizar detection_events
+        await self._update_detection_events(video_name)
+
+    async def _update_detection_events(self, video_name: str):
+        """Llena automáticamente detection_events desde detections"""
+        query = f"""
+        INSERT INTO detection_events (
+            video_name, brand_name, track_id,
+            start_frame, end_frame, total_frames,
+            min_confidence, max_confidence, avg_confidence,
+            first_detected, last_detected
+        )
+        SELECT
+            video_name, brand_name, track_id,
+            MIN(frame_number) AS start_frame,
+            MAX(frame_number) AS end_frame,
+            COUNT(*) AS total_frames,
+            MIN(confidence) AS min_confidence,
+            MAX(confidence) AS max_confidence,
+            AVG(confidence) AS avg_confidence,
+            MIN(created_at) AS first_detected,
+            MAX(created_at) AS last_detected
+        FROM detections
+        WHERE video_name = '{video_name}'
+        GROUP BY video_name, brand_name, track_id
         """
-        Save complete video analysis to database
-        
-        Args:
-            analysis_results: Analysis results from video processor
-            video_path: Path to video file
-            filename: Original filename
-            
-        Returns:
-            Video ID
-        """
-        try:
-            with self.db_manager.get_session() as session:
-                # Create video record
-                video_info = analysis_results['video_info']
-                video_record = Video(
-                    filename=filename,
-                    filepath=video_path,
-                    duration=video_info['duration'],
-                    fps=video_info['fps'],
-                    total_frames=video_info['total_frames'],
-                    processing_time=video_info['processing_time'],
-                    file_size=Path(video_path).stat().st_size if Path(video_path).exists() else None
-                )
-                
-                session.add(video_record)
-                session.flush()  # Get video ID
-                
-                video_id = video_record.id
-                
-                # Save detections
-                detection_count = 0
-                for frame_data in analysis_results['frame_detections']:
-                    for detection in frame_data['detections']:
-                        # Get or create brand
-                        brand = session.query(Brand).filter_by(
-                            name=detection['brand_name']
-                        ).first()
-                        
-                        if not brand:
-                            continue  # Skip if brand not in database
-                        
-                        # Create detection record
-                        bbox = detection['bbox']
-                        detection_record = Detection(
-                            video_id=video_id,
-                            brand_id=brand.id,
-                            frame_idx=frame_data['frame_idx'],
-                            timestamp=frame_data['timestamp'],
-                            confidence=detection['confidence'],
-                            bbox_x1=int(bbox[0]),
-                            bbox_y1=int(bbox[1]),
-                            bbox_x2=int(bbox[2]),
-                            bbox_y2=int(bbox[3])
-                        )
-                        
-                        # Optionally save cropped image
-                        # cropped_image = self._extract_cropped_image(video_path, frame_data['frame_idx'], bbox)
-                        # if cropped_image is not None:
-                        #     detection_record.cropped_image = cropped_image
-                        
-                        session.add(detection_record)
-                        detection_count += 1
-                
-                # Create analysis report
-                report_data = {
-                    'summary': analysis_results['summary'],
-                    'brand_analysis': analysis_results['brand_detections'],
-                    'processing_stats': {
-                        'processed_frames': video_info['processed_frames'],
-                        'avg_processing_time_per_frame': video_info['avg_processing_time_per_frame']
-                    }
-                }
-                
-                analysis_report = AnalysisReport(
-                    video_id=video_id,
-                    total_brands_detected=len(analysis_results['brand_detections']),
-                    total_detections=detection_count,
-                    report_data=json.dumps(report_data)
-                )
-                
-                session.add(analysis_report)
-                session.commit()
-                
-                logger.info(f"Saved video analysis: {filename} (ID: {video_id}) with {detection_count} detections")
-                return video_id
-                
-        except Exception as e:
-            logger.error(f"Failed to save video analysis: {e}")
-            raise
-    
-    def get_analysis_by_id(self, analysis_id: str) -> Optional[Dict]:
-        """Get analysis results by ID"""
-        try:
-            with self.db_manager.get_session() as session:
-                # Try to find by video ID first
-                try:
-                    video_id = int(analysis_id)
-                except ValueError:
-                    return None
-                
-                video = session.query(Video).filter_by(id=video_id).first()
-                if not video:
-                    return None
-                
-                # Get analysis report
-                report = session.query(AnalysisReport).filter_by(video_id=video_id).first()
-                if not report:
-                    return None
-                
-                # Get detections
-                detections = session.query(Detection).filter_by(video_id=video_id).all()
-                
-                # Format response
-                result = {
-                    'video_info': {
-                        'id': video.id,
-                        'filename': video.filename,
-                        'duration': video.duration,
-                        'fps': video.fps,
-                        'total_frames': video.total_frames,
-                        'processed_at': video.processed_at.isoformat(),
-                        'processing_time': video.processing_time
-                    },
-                    'analysis_summary': {
-                        'total_brands_detected': report.total_brands_detected,
-                        'total_detections': report.total_detections,
-                        'generated_at': report.generated_at.isoformat()
-                    },
-                    'detections': []
-                }
-                
-                # Add detection details
-                for detection in detections:
-                    result['detections'].append({
-                        'brand_name': detection.brand.name,
-                        'frame_idx': detection.frame_idx,
-                        'timestamp': detection.timestamp,
-                        'confidence': detection.confidence,
-                        'bbox': [detection.bbox_x1, detection.bbox_y1, 
-                                detection.bbox_x2, detection.bbox_y2]
-                    })
-                
-                # Add detailed report data if available
-                if report.report_data:
-                    try:
-                        detailed_data = json.loads(report.report_data)
-                        result['detailed_analysis'] = detailed_data
-                    except json.JSONDecodeError:
-                        pass
-                
-                return result
-                
-        except Exception as e:
-            logger.error(f"Failed to get analysis by ID {analysis_id}: {e}")
-            return None
-    
-    def get_video_statistics(self) -> Dict[str, Any]:
-        """Get overall video processing statistics"""
-        try:
-            with self.db_manager.get_session() as session:
-                # Basic counts
-                total_videos = session.query(Video).count()
-                total_detections = session.query(Detection).count()
-                total_brands = session.query(Brand).count()
-                
-                # Brand popularity
-                brand_stats = session.query(
-                    Brand.name,
-                    func.count(Detection.id).label('detection_count')
-                ).join(Detection).group_by(Brand.name).all()
-                
-                # Recent videos
-                recent_videos = session.query(Video).order_by(
-                    desc(Video.processed_at)
-                ).limit(10).all()
-                
-                # Average processing time
-                avg_processing_time = session.query(
-                    func.avg(Video.processing_time)
-                ).scalar()
-                
-                return {
-                    'overview': {
-                        'total_videos': total_videos,
-                        'total_detections': total_detections,
-                        'total_brands': total_brands,
-                        'avg_processing_time': float(avg_processing_time) if avg_processing_time else 0
-                    },
-                    'brand_popularity': [
-                        {'brand': stat.name, 'detections': stat.detection_count}
-                        for stat in brand_stats
-                    ],
-                    'recent_videos': [
-                        {
-                            'id': video.id,
-                            'filename': video.filename,
-                            'duration': video.duration,
-                            'processed_at': video.processed_at.isoformat()
-                        }
-                        for video in recent_videos
-                    ]
-                }
-                
-        except Exception as e:
-            logger.error(f"Failed to get video statistics: {e}")
-            return {}
-    
-    def _extract_cropped_image(self, video_path: str, frame_idx: int, bbox: List[float]) -> Optional[bytes]:
-        """Extract and encode cropped image from video frame"""
-        try:
-            cap = cv2.VideoCapture(video_path)
-            cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
-            
-            ret, frame = cap.read()
-            cap.release()
-            
-            if not ret:
-                return None
-            
-            # Crop image
-            x1, y1, x2, y2 = map(int, bbox)
-            cropped = frame[y1:y2, x1:x2]
-            
-            # Encode as JPEG
-            _, encoded = cv2.imencode('.jpg', cropped)
-            return encoded.tobytes()
-            
-        except Exception as e:
-            logger.error(f"Failed to extract cropped image: {e}")
-            return None
+        supabase.postgrest.rpc("execute_sql", {"sql": query}).execute()
+
+
+# Ejemplo de uso
+if __name__ == "__main__":
+    processor = DetectionPipeline()
+
+    async def main():
+        # Imagen individual
+        await processor.process_source(Path("example_image.jpg"))
+
+        # Video
+        await processor.process_source("https://www.example.com/video.mp4", max_frames=10)
+
+    asyncio.run(main())

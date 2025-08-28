@@ -31,3 +31,6 @@ ultralytics
 fastapi
 dotenv
 uvicorn
+
+## SUPABASE ##
+supabase
