@@ -1,19 +1,19 @@
 import os
+import uuid
 from pathlib import Path
 from typing import List, Dict, Optional, Any
 import cv2
 import numpy as np
 import requests
 from ultralytics import YOLO
-from dotenv import load_dotenv
-
-load_dotenv()
+from io import BytesIO
+from app.config.model_config import settings
 
 class ImageDetectionService:
     model: YOLO = None
 
     def __init__(self):
-        model_path = os.getenv("MODEL_PATH")
+        model_path = settings.MODEL_PATH
         if self.model is None:
             print(f"Cargando modelo desde: {model_path}")
             try:
@@ -61,3 +61,54 @@ class ImageDetectionService:
         return detections
 
 
+    def crop_and_upload(self, image_source: Any, detection: Dict[str, Any]) -> Optional[str]:
+        try:
+            if not isinstance(image_source, np.ndarray):
+                img = self.load_image(image_source)
+            else:
+                img = image_source
+                
+            if img is None:
+                return None
+                
+            # Recortar la región detectada
+            x1, y1, x2, y2 = detection["box"]
+            cropped_img = img[y1:y2, x1:x2]
+            
+            unique_id = uuid.uuid4().hex[:8]
+            crop_filename = f"{detection['class_name']}_{unique_id}.jpg"
+            
+            # Convertir la imagen a bytes
+            _, buffer = cv2.imencode('.jpg', cropped_img)
+            crop_bytes = BytesIO(buffer).getvalue()
+            
+            # Subir a Supabase
+            from app.database.connection import get_supabase
+            supabase = get_supabase()
+            
+            bucket_name = "brand-crops"
+            
+            try:
+                buckets = supabase.storage.list_buckets()
+                bucket_exists = any(b["name"] == bucket_name for b in buckets)
+                
+                if not bucket_exists:
+                    supabase.storage.create_bucket(bucket_name)
+            except:
+                try:
+                    supabase.storage.create_bucket(bucket_name)
+                except:
+                    pass
+            
+            supabase.storage.from_(bucket_name).upload(
+                path=crop_filename,
+                file=crop_bytes,
+                file_options={"content-type": "image/jpeg"}
+            )
+            
+            image_url = supabase.storage.from_(bucket_name).get_public_url(crop_filename)
+            return image_url
+            
+        except Exception as e:
+            print(f"Error al recortar y subir imagen: {str(e)}")
+            return None
