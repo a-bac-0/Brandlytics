@@ -1,6 +1,5 @@
 import cv2
 from ultralytics import YOLO
-import argparse
 
 def run_detection(model_path, image_path):
     """
@@ -49,10 +48,10 @@ def run_detection(model_path, image_path):
 
 if __name__ == "__main__":
     # Ruta al modelo entrenado
-    MODEL_PATH = "../models/best.pt"  
+    MODEL_PATH = "../models/best2.pt"  
     
     # Ruta a la imagen a probar
-    IMAGE_TO_TEST = "../data/raw/images/BrandDetection.v4-version4.yolov8/test/images/imgi_115_jun-13th-2022-closeup-couple-260nw-2172249775_jpg.rf.9299c9fb77ae539ba71dcf72151809b9.jpg"
+    IMAGE_TO_TEST = "../data/raw/images/BrandDetection.v6-version6.yolov8/test/images/imgi_26_default_jpg.rf.088bae248b0e469279bf0eb066bc1b00.jpg"
     # ---------------------
 
     run_detection(MODEL_PATH, IMAGE_TO_TEST)
