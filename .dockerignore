@@ -1,0 +1,43 @@
+# Version control
+.git
+.gitignore
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.venv/
+venv/
+.env
+
+# Jupyter
+*.ipynb_checkpoints/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+build/
+dist/
+.cache/
+
+# Data and runs (mounted via volumes at runtime)
+data/
+runs/
+tmp/
+logs/
+
+# Models (mounted via volumes; keep small context)
+models/pretrained/
+models/trained/
+*.pt
+
+# Node/Frontend caches
+frontend/node_modules/
+
+# IDE
+.vscode/
+.idea/
