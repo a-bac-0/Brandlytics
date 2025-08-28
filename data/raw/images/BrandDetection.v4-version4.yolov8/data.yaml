@@ -1,6 +1,6 @@
-train: train/images
-val: valid/images
-test: test/images
+train: ../train/images
+val: ../valid/images
+test: ../test/images
 
 nc: 3
 names: ['coca cola', 'nike', 'starbucks']
@@ -8,6 +8,6 @@ names: ['coca cola', 'nike', 'starbucks']
 roboflow:
   workspace: branddetection-noclk
   project: branddetection-onbyr
-  version: 4
+  version: 6
   license: CC BY 4.0
-  url: https://universe.roboflow.com/branddetection-noclk/branddetection-onbyr/dataset/4
+  url: https://universe.roboflow.com/branddetection-noclk/branddetection-onbyr/dataset/6
