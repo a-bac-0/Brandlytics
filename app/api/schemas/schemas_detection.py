@@ -4,9 +4,8 @@ from uuid import UUID
 from datetime import datetime
 
 class DetectionBase(BaseModel):
-    """Schema base con los campos comunes para una detección."""
-    video_name: Optional[str] = None # Opcional para detecciones en imágenes
-    frame_number: Optional[int] = None # Opcional para detecciones en imágenes
+    video_name: Optional[str] = None 
+    frame_number: Optional[int] = None 
     timestamp_seconds: Optional[float] = None
     brand_name: str
     confidence: float

@@ -1,19 +1,18 @@
-import os
-from pathlib import Path
 from typing import List, Dict, Optional, Any
 import cv2
+from pathlib import Path
 import numpy as np
 import requests
 from ultralytics import YOLO
-from dotenv import load_dotenv
-
-load_dotenv()
+from app.config.model_config import settings
+from app.api.schemas.schemas_detection import DetectionCreate
+from app.utils.image_processing import crop_and_upload_detection
 
 class ImageDetectionService:
     model: YOLO = None
 
     def __init__(self):
-        model_path = os.getenv("MODEL_PATH")
+        model_path = settings.MODEL_PATH
         if self.model is None:
             print(f"Cargando modelo desde: {model_path}")
             try:
@@ -41,7 +40,10 @@ class ImageDetectionService:
             raise ValueError("Tipo de fuente de imagen no soportado")
         
     def detect_brands(self, image_source: Any, conf: float = 0.5, iou: float = 0.6) -> List[Dict[str, Any]]:
-        img = self.load_image(image_source)
+        if isinstance(image_source, np.ndarray):
+            img = image_source
+        else:
+            img = self.load_image(image_source)
         if img is None:
             raise ValueError("No se pudo cargar la imagen.")
         
@@ -59,5 +61,33 @@ class ImageDetectionService:
             detections.append(detection_data)
 
         return detections
+    
+    def process_image_input(self, image_source: Any, filename: str) -> Dict:
+        img_np = self.load_image(image_source)
+        if img_np is None:
+            raise ValueError("No se pudo cargar la imagen.")
 
+        detections = self.detect_brands(img_np)
+
+        detections_to_save: List[DetectionCreate] = []
+        stem = Path(filename).stem
+
+        for det in detections:
+            crop_url = crop_and_upload_detection(img_np, det, stem)
+            
+            detections_to_save.append(DetectionCreate(
+                video_name=filename,
+                frame_number=1,
+                brand_name=det["class_name"],
+                confidence=det["confidence"],
+                bbox_x1=det["box"][0], bbox_y1=det["box"][1],
+                bbox_x2=det["box"][2], bbox_y2=det["box"][3],
+                image_crop_url=crop_url,
+                detection_type="image"
+            ))
+        
+        return {
+            "detections": detections,
+            "detections_to_save": detections_to_save
+        }
 
