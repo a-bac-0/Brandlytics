@@ -41,17 +41,30 @@ def get_supported_brands():
     except:
         return []
 
-def detect_brands_in_image(image_file):
-    """Send image to API for brand detection"""
+def detect_brands_in_image(image_file=None, image_url=None):
+    """Send image to API for brand detection using the correct endpoint"""
     try:
-        files = {"file": image_file}
-        response = requests.post(f"{API_BASE_URL}/detect/image", files=files)
+        # Usar el endpoint correcto
+        url = f"{API_BASE_URL}/api/detection/process-image"
+        
+        if image_file:
+            files = {"image_file": image_file}
+            data = {}
+            response = requests.post(url, files=files, data=data)
+        elif image_url:
+            data = {"image_url": image_url}
+            response = requests.post(url, data=data)
+        else:
+            return None
+            
         if response.status_code == 200:
             return response.json()
-        return []
+        else:
+            st.error(f"API Error: {response.status_code} - {response.text}")
+            return None
     except Exception as e:
         st.error(f"Error detecting brands: {e}")
-        return []
+        return None
 
 def detect_brands_in_video(video_file, save_to_db=True):
     """Send video to API for brand detection"""
@@ -185,51 +198,239 @@ def main():
     tab1, tab2, tab3 = st.tabs(["📷 Image Detection", "🎬 Video Analysis", "📊 Analytics"])
     
     with tab1:
-        st.header("Image Brand Detection")
+        st.header("📷 Image Brand Detection")
         
-        uploaded_image = st.file_uploader(
-            "Choose an image...", 
-            type=['jpg', 'jpeg', 'png', 'bmp'],
-            key="image_uploader"
+        # Agregar un poco de estilo con CSS personalizado
+        st.markdown("""
+        <style>
+        .detection-container {
+            background-color: #f8f9fa;
+            padding: 20px;
+            border-radius: 10px;
+            margin: 10px 0;
+        }
+        .metric-card {
+            background-color: white;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .image-container {
+            border: 2px solid #e0e0e0;
+            border-radius: 10px;
+            padding: 10px;
+            background-color: white;
+        }
+        </style>
+        """, unsafe_allow_html=True)
+        
+        # Opciones de entrada con mejor diseño
+        st.markdown("### 🎯 Método de Entrada")
+        input_method = st.radio(
+            "",
+            ["📁 Subir archivo", "🌐 URL de imagen"],
+            key="input_method",
+            horizontal=True
         )
         
-        if uploaded_image is not None:
-            # Display original image
-            col1, col2 = st.columns(2)
+        st.divider()
+        
+        image = None
+        detection_results = None
+        
+        if input_method == "📁 Subir archivo":
+            uploaded_image = st.file_uploader(
+                "Selecciona una imagen para analizar",
+                type=['jpg', 'jpeg', 'png', 'bmp'],
+                key="image_uploader",
+                help="Formatos soportados: JPG, JPEG, PNG, BMP"
+            )
+            
+            if uploaded_image is not None:
+                # Botón de detección prominente
+                detect_button = st.button(
+                    "🔍 Detectar Marcas", 
+                    key="detect_image_file",
+                    type="primary",
+                    use_container_width=True
+                )
+                
+                if detect_button:
+                    uploaded_image.seek(0)
+                    with st.spinner("🔄 Analizando imagen..."):
+                        detection_results = detect_brands_in_image(image_file=uploaded_image)
+                
+                # Cargar imagen para mostrar
+                uploaded_image.seek(0)
+                image = cv2.imdecode(np.frombuffer(uploaded_image.read(), np.uint8), 1)
+        
+        else:  # URL de imagen
+            image_url = st.text_input(
+                "🌐 Introduce la URL de la imagen:",
+                placeholder="https://ejemplo.com/imagen.jpg",
+                key="image_url_input",
+                help="Introduce una URL válida de imagen"
+            )
+            
+            if image_url:
+                try:
+                    # Botón de detección prominente
+                    detect_button = st.button(
+                        "🔍 Detectar Marcas", 
+                        key="detect_image_url",
+                        type="primary",
+                        use_container_width=True
+                    )
+                    
+                    if detect_button:
+                        with st.spinner("🔄 Analizando imagen..."):
+                            detection_results = detect_brands_in_image(image_url=image_url)
+                    
+                    # Cargar imagen para procesamiento local
+                    response = requests.get(image_url)
+                    image = cv2.imdecode(np.frombuffer(response.content, np.uint8), 1)
+                        
+                except Exception as e:
+                    st.error(f"❌ Error al cargar la imagen desde URL: {e}")
+        
+        # Mostrar comparación de imágenes si tenemos tanto la imagen como los resultados
+        if image is not None:
+            st.divider()
+            st.markdown("### 🖼️ Análisis Visual")
+            
+            # Crear dos columnas para comparación lado a lado
+            col1, col2 = st.columns(2, gap="medium")
             
             with col1:
-                st.subheader("Original Image")
-                image = cv2.imdecode(np.frombuffer(uploaded_image.read(), np.uint8), 1)
-                st.image(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
-            
-            # Detect brands
-            if st.button("🔍 Detect Brands", key="detect_image"):
-                uploaded_image.seek(0)  # Reset file pointer
-                detections = detect_brands_in_image(uploaded_image)
-                
-                if detections:
-                    with col2:
-                        st.subheader("Detections")
-                        # Draw detections
-                        annotated_image = draw_detections_on_image(image.copy(), detections)
-                        st.image(cv2.cvtColor(annotated_image, cv2.COLOR_BGR2RGB))
+                st.markdown("#### 📷 Imagen Original")
+                with st.container():
+                    st.markdown('<div class="image-container">', unsafe_allow_html=True)
+                    # Redimensionar imagen para mejor visualización
+                    height, width = image.shape[:2]
+                    max_height = 400
+                    if height > max_height:
+                        scale = max_height / height
+                        new_width = int(width * scale)
+                        new_height = int(height * scale)
+                        image_resized = cv2.resize(image, (new_width, new_height))
+                    else:
+                        image_resized = image
                     
-                    # Show detection details
-                    st.subheader("Detection Results")
-                    for i, detection in enumerate(detections):
-                        with st.expander(f"Detection {i+1}: {detection['brand_name']}"):
-                            col_a, col_b, col_c = st.columns(3)
-                            with col_a:
-                                st.metric("Brand", detection['brand_name'])
-                            with col_b:
-                                st.metric("Confidence", f"{detection['confidence']:.2f}")
-                            with col_c:
-                                st.metric("Class ID", detection['class_id'])
+                    st.image(cv2.cvtColor(image_resized, cv2.COLOR_BGR2RGB), use_column_width=True)
+                    st.markdown('</div>', unsafe_allow_html=True)
+            
+            with col2:
+                st.markdown("#### 🎯 Detecciones")
+                with st.container():
+                    st.markdown('<div class="image-container">', unsafe_allow_html=True)
+                    
+                    if detection_results:
+                        # Convertir resultados al formato esperado
+                        detections_formatted = []
+                        for detection in detection_results.get("detections", []):
+                            formatted_detection = {
+                                "brand_name": detection["class_name"],
+                                "confidence": detection["confidence"],
+                                "bbox": detection["box"],
+                                "class_id": detection["class_id"]
+                            }
+                            detections_formatted.append(formatted_detection)
+                        
+                        if detections_formatted:
+                            # Usar la imagen redimensionada para las detecciones
+                            annotated_image = draw_detections_on_image(image_resized.copy(), detections_formatted)
+                            st.image(cv2.cvtColor(annotated_image, cv2.COLOR_BGR2RGB), use_column_width=True)
                             
-                            st.write("**Bounding Box:**", detection['bbox'])
-                else:
-                    st.warning("No brands detected in this image.")
-    
+                            # Mostrar número de detecciones
+                            st.success(f"✅ {len(detections_formatted)} marca(s) detectada(s)")
+                        else:
+                            # Mostrar imagen original si no hay detecciones
+                            st.image(cv2.cvtColor(image_resized, cv2.COLOR_BGR2RGB), use_column_width=True)
+                            st.warning("⚠️ No se detectaron marcas")
+                    else:
+                        # Mostrar imagen original mientras se procesa
+                        st.image(cv2.cvtColor(image_resized, cv2.COLOR_BGR2RGB), use_column_width=True)
+                        if not detection_results:
+                            st.info("👆 Haz clic en 'Detectar Marcas' para analizar")
+                    
+                    st.markdown('</div>', unsafe_allow_html=True)
+
+        # Mostrar resultados detallados debajo de las imágenes
+        if detection_results and image is not None:
+            st.divider()
+            st.markdown("### 📊 Resultados Detallados")
+            
+            # Información general en una tarjeta
+            st.markdown('<div class="detection-container">', unsafe_allow_html=True)
+            
+            detections_formatted = []
+            for detection in detection_results.get("detections", []):
+                formatted_detection = {
+                    "brand_name": detection["class_name"],
+                    "confidence": detection["confidence"],
+                    "bbox": detection["box"],
+                    "class_id": detection["class_id"]
+                }
+                detections_formatted.append(formatted_detection)
+            
+            if detections_formatted:
+                # Métricas generales
+                col1, col2, col3 = st.columns(3)
+                
+                with col1:
+                    st.metric(
+                        "🎯 Total Detecciones", 
+                        len(detections_formatted),
+                        help="Número total de marcas detectadas"
+                    )
+                
+                with col2:
+                    avg_confidence = sum(d["confidence"] for d in detections_formatted) / len(detections_formatted)
+                    st.metric(
+                        "📈 Confianza Promedio", 
+                        f"{avg_confidence:.2f}",
+                        help="Confianza promedio de todas las detecciones"
+                    )
+                
+                with col3:
+                    max_confidence = max(d["confidence"] for d in detections_formatted)
+                    st.metric(
+                        "⭐ Mejor Detección", 
+                        f"{max_confidence:.2f}",
+                        help="Mayor confianza entre todas las detecciones"
+                    )
+                
+                # Estado de la base de datos
+                st.info(f"💾 {detection_results.get('database_status', 'Procesamiento completado')}")
+                
+                # Detalles de cada detección
+                st.markdown("#### 🔍 Detalle por Marca")
+                
+                for i, detection in enumerate(detections_formatted):
+                    with st.expander(f"🏷️ {detection['brand_name']} - Detección #{i+1}", expanded=i==0):
+                        # Crear columnas para la información
+                        detail_col1, detail_col2, detail_col3 = st.columns(3)
+                        
+                        with detail_col1:
+                            st.markdown("**📊 Información Básica**")
+                            st.write(f"**Marca:** {detection['brand_name']}")
+                            st.write(f"**ID Clase:** {detection['class_id']}")
+                        
+                        with detail_col2:
+                            st.markdown("**🎯 Métricas**")
+                            st.write(f"**Confianza:** {detection['confidence']:.3f}")
+                            # Barra de progreso para la confianza
+                            st.progress(detection['confidence'])
+                        
+                        with detail_col3:
+                            st.markdown("**📐 Coordenadas**")
+                            bbox = detection['bbox']
+                            st.write(f"**X1, Y1:** ({bbox[0]:.0f}, {bbox[1]:.0f})")
+                            st.write(f"**X2, Y2:** ({bbox[2]:.0f}, {bbox[3]:.0f})")
+                            st.write(f"**Tamaño:** {abs(bbox[2]-bbox[0]):.0f} × {abs(bbox[3]-bbox[1]):.0f}")
+            
+            st.markdown('</div>', unsafe_allow_html=True)
+
     with tab2:
         st.header("Video Brand Analysis")
         
