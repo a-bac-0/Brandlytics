@@ -1,13 +1,12 @@
-import os
-import uuid
-from pathlib import Path
 from typing import List, Dict, Optional, Any
 import cv2
+from pathlib import Path
 import numpy as np
 import requests
 from ultralytics import YOLO
-from io import BytesIO
 from app.config.model_config import settings
+from app.api.schemas.schemas_detection import DetectionCreate
+from app.utils.image_processing import crop_and_upload_detection
 
 class ImageDetectionService:
     model: YOLO = None
@@ -41,7 +40,10 @@ class ImageDetectionService:
             raise ValueError("Tipo de fuente de imagen no soportado")
         
     def detect_brands(self, image_source: Any, conf: float = 0.5, iou: float = 0.6) -> List[Dict[str, Any]]:
-        img = self.load_image(image_source)
+        if isinstance(image_source, np.ndarray):
+            img = image_source
+        else:
+            img = self.load_image(image_source)
         if img is None:
             raise ValueError("No se pudo cargar la imagen.")
         
@@ -59,56 +61,33 @@ class ImageDetectionService:
             detections.append(detection_data)
 
         return detections
+    
+    def process_image_input(self, image_source: Any, filename: str) -> Dict:
+        img_np = self.load_image(image_source)
+        if img_np is None:
+            raise ValueError("No se pudo cargar la imagen.")
 
+        detections = self.detect_brands(img_np)
 
-    def crop_and_upload(self, image_source: Any, detection: Dict[str, Any]) -> Optional[str]:
-        try:
-            if not isinstance(image_source, np.ndarray):
-                img = self.load_image(image_source)
-            else:
-                img = image_source
-                
-            if img is None:
-                return None
-                
-            # Recortar la región detectada
-            x1, y1, x2, y2 = detection["box"]
-            cropped_img = img[y1:y2, x1:x2]
+        detections_to_save: List[DetectionCreate] = []
+        stem = Path(filename).stem
+
+        for det in detections:
+            crop_url = crop_and_upload_detection(img_np, det, stem)
             
-            unique_id = uuid.uuid4().hex[:8]
-            crop_filename = f"{detection['class_name']}_{unique_id}.jpg"
-            
-            # Convertir la imagen a bytes
-            _, buffer = cv2.imencode('.jpg', cropped_img)
-            crop_bytes = BytesIO(buffer).getvalue()
-            
-            # Subir a Supabase
-            from app.database.connection import get_supabase
-            supabase = get_supabase()
-            
-            bucket_name = "brand-crops"
-            
-            try:
-                buckets = supabase.storage.list_buckets()
-                bucket_exists = any(b["name"] == bucket_name for b in buckets)
-                
-                if not bucket_exists:
-                    supabase.storage.create_bucket(bucket_name)
-            except:
-                try:
-                    supabase.storage.create_bucket(bucket_name)
-                except:
-                    pass
-            
-            supabase.storage.from_(bucket_name).upload(
-                path=crop_filename,
-                file=crop_bytes,
-                file_options={"content-type": "image/jpeg"}
-            )
-            
-            image_url = supabase.storage.from_(bucket_name).get_public_url(crop_filename)
-            return image_url
-            
-        except Exception as e:
-            print(f"Error al recortar y subir imagen: {str(e)}")
-            return None
+            detections_to_save.append(DetectionCreate(
+                video_name=filename,
+                frame_number=1,
+                brand_name=det["class_name"],
+                confidence=det["confidence"],
+                bbox_x1=det["box"][0], bbox_y1=det["box"][1],
+                bbox_x2=det["box"][2], bbox_y2=det["box"][3],
+                image_crop_url=crop_url,
+                detection_type="image"
+            ))
+        
+        return {
+            "detections": detections,
+            "detections_to_save": detections_to_save
+        }
+

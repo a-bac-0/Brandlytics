@@ -1,13 +1,11 @@
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException
 from typing import Optional, List
-import cv2
-import numpy as np
-from uuid import uuid4                    
 from pathlib import Path
 from app.services.image_detection import ImageDetectionService
+from app.services.video_detection import VideoDetectionService
 from app.api.schemas.schemas_detection import DetectionCreate 
-from app.database.operations import save_detections, upload_public_bytes
-from app.config.model_config import settings
+from app.database.operations import save_detections
+from app.utils.image_processing import crop_and_upload_detection
 
 router = APIRouter()
 
@@ -22,72 +20,66 @@ async def process_image(
         raise HTTPException(status_code=400, detail="Debes proporcionar 'image_file' o 'image_url'.")
     
     try:
-        if image_file:
-            image_source = await image_file.read()
-            filename = image_file.filename
-        else:
-            image_source = image_url
-            filename = image_url.split("/")[-1]
+        image_source = await image_file.read() if image_file else image_url
+        filename = image_file.filename if image_file else image_url.split("/")[-1]
 
-        detections = detection_service.detect_brands(image_source)
+        # Llamamos al método principal del servicio que hace todo el trabajo
+        result = detection_service.process_image_input(image_source, filename)
 
-        img_array = detection_service.load_image(image_source)
-        if img_array is None:
-            raise HTTPException(status_code=400, detail="No se pudo cargar la imagen para recortar.")
-
-        detections_to_save: List[DetectionCreate] = []
-        stem = Path(filename).stem
-
-        for det in detections:
-            crop_url = None
-            x1, y1, x2, y2 = det["box"]
-            crop = img_array[y1:y2, x1:x2]
-            if crop.size > 0:
-                ok, buf = cv2.imencode(".jpg", crop)
-                if ok:
-                    storage_path = f"{stem}/{uuid4().hex}_{det['class_name']}.jpg"
-                    crop_url = upload_public_bytes(
-                        bucket=settings.BUCKET_CROPS,    
-                        path=storage_path,
-                        content=buf.tobytes(),
-                        content_type="image/jpeg"
-                    )
-
-            new_detection = DetectionCreate(
-                video_name=filename,
-                frame_number=1,  
-                brand_name=det["class_name"],
-                confidence=det["confidence"],
-                bbox_x1=det["box"][0],
-                bbox_y1=det["box"][1],
-                bbox_x2=det["box"][2],
-                bbox_y2=det["box"][3],
-                image_crop_url=crop_url,
-                detection_type="image"
-            )
-            detections_to_save.append(new_detection)
-
-        # Guardar en la base de datos
+        detections_to_save = result["detections_to_save"]
         db_status = "0 detecciones guardadas en Supabase."
         if detections_to_save:
             save_detections(detections_to_save)
             db_status = f"{len(detections_to_save)} detecciones guardadas en Supabase."
-
         return {
             "status": "success", 
             "filename": filename, 
-            "detections": detections,
+            "detections": result["detections"],
             "database_status": db_status  
         }
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.post("/process-video")
-async def process_video(video: UploadFile = File(...)):
-    return {
-        "status": "received", 
-        "filename": video.filename, 
-        "message": "Video recibido. El procesamiento comenzará pronto."
-    }
 
+
+## Anca :Ruta basándome en la de la Imagen , pero para vídeo, si tienes que cambiar cosas adelante.
+@router.post("/process-video")
+async def process_video(
+    video_file: Optional[UploadFile] = File(None),
+    video_url: Optional[str] = Form(None),
+):
+    if not video_file and not video_url:
+        raise HTTPException(status_code=400, detail="Debes enviar 'video_file' o 'video_url'.")
+    if video_file and video_url:
+        raise HTTPException(status_code=400, detail="Envía solo uno: 'video_file' o 'video_url'.")
+    
+    try:
+        video_bytes = await video_file.read() if video_file else None
+        filename = video_file.filename if video_file else None
+
+        video_service = VideoDetectionService(detection_service)
+        result = video_service.process_video_input(
+            video_file_bytes=video_bytes,
+            filename=filename,
+            video_url=video_url
+        )
+
+        detections_to_save = result["detections_to_save"]
+        saved_count = 0
+        if detections_to_save:
+            save_detections(detections_to_save)
+            saved_count = len(detections_to_save)
+
+        return {
+            "status": "success",
+            "filename": filename or video_url,
+            "fps": result["fps"],
+            "total_frames": result["total_frames"],
+            "detections_saved": saved_count,
+            "database_status": f"{saved_count} detecciones guardadas en Supabase."
+        }
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
