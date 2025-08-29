@@ -6,42 +6,41 @@ from pathlib import Path
 from typing import List, Dict, Optional, Union, Tuple
 from datetime import datetime
 import time
+from uuid import uuid4
 
 import numpy as np
 import cv2
 import av  # PyAV for FFmpeg integration
 from PIL import Image
-from supabase import create_client, Client
 from ultralytics import YOLO
 from yolox.tracker.byte_tracker import BYTETracker
 from tqdm import tqdm
 
+from app.database.connection import get_supabase
+from app.database.operations import save_detections, upload_public_bytes
+from app.api.schemas.schemas_detection import DetectionCreate
+from app.utils.image_processing import crop_and_upload_detection
+from app.config.model_config import settings
+
 logger = logging.getLogger(__name__)
 
-# Environment variables
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-YOLO_MODEL_PATH = os.getenv("YOLO_MODEL_PATH", "yolov8n.pt")
 
 class OptimizedVideoProcessor:
     """
     Unified video processor for brand detection with Supabase integration.
     Uses FFmpeg via PyAV for optimal video decoding performance.
+    Follows the same patterns as the existing image processing pipeline.
     """
     
     def __init__(self, config: Optional[Dict] = None):
         self.config = config or {}
         self.fps_sample = self.config.get('video_processing', {}).get('fps_sample', 1) or 1
         
-        # Initialize Supabase
-        if SUPABASE_URL and SUPABASE_KEY:
-            self.supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-        else:
-            logger.warning("Supabase credentials not found. Database features disabled.")
-            self.supabase = None
+        # Initialize Supabase (using existing connection pattern)
+        self.supabase = get_supabase()
         
-        # Initialize YOLO model
-        self.model = YOLO(YOLO_MODEL_PATH)
+        # Initialize YOLO model (using existing settings)
+        self.model = YOLO(settings.MODEL_PATH)
         
         # Initialize tracker
         self.tracker = BYTETracker(frame_rate=30)
@@ -49,6 +48,9 @@ class OptimizedVideoProcessor:
         # Performance tracking
         self.total_detection_time = 0.0
         self.processed_frames = 0
+        
+        # Tracking state for detection events
+        self.active_tracks: Dict[int, Dict] = {}  # track_id -> track_info
 
     def detect_brands(self, frame: np.ndarray) -> List[Dict]:
         """
@@ -98,53 +100,50 @@ class OptimizedVideoProcessor:
         return annotated
 
     def _compute_sampling_step(self, fps: float) -> int:
-        """Compute frame sampling step based on target samples per second."""
-        try:
-            if fps and fps > 0:
-                step = int(round(max(1.0, fps / float(self.fps_sample))))
-            else:
-                step = 1
-        except Exception:
-            step = 1
-        return max(1, step)
+        """Compute frame sampling step based on FPS and config."""
+        if fps <= 0:
+            return max(1, self.fps_sample)
+        return max(1, int(fps / self.fps_sample))
 
     async def process_video(
         self,
         video_path: Union[str, Path],
-        output_path: Optional[str] = None,
+        output_path: Optional[Union[str, Path]] = None,
         max_frames: Optional[int] = None,
         show_progress: bool = True,
-        save_to_db: bool = True,
+        save_to_db: bool = False,
         video_name: Optional[str] = None
     ) -> Dict:
         """
-        Process video for brand detection with optional Supabase integration.
-        Uses FFmpeg via PyAV for optimal performance.
+        Process video with PyAV for optimal performance and Supabase integration.
         
         Args:
             video_path: Path to input video
-            output_path: Optional path for annotated output video
-            max_frames: Optional limit on frames to process
+            output_path: Path for annotated output video (optional)
+            max_frames: Maximum frames to process (for testing)
             show_progress: Show progress bar
-            save_to_db: Save detections to Supabase
-            video_name: Custom video name for database
-            
-        Returns:
-            Analysis results dictionary
-        """
-        video_path = str(video_path)
-        video_name = video_name or Path(video_path).stem
+            save_to_db: Save detections to Supabase database
+            video_name: Name for database entries (defaults to filename)
         
-        # Open video with PyAV (FFmpeg backend)
-        container = av.open(video_path)
+        Returns:
+            Dict with analysis results, performance metrics, and detection data
+        """
+        video_path = Path(video_path)
+        if not video_path.exists():
+            raise FileNotFoundError(f"Video not found: {video_path}")
+        
+        if video_name is None:
+            video_name = video_path.stem
+        
+        # Open video with PyAV
+        container = av.open(str(video_path))
         video_stream = container.streams.video[0]
         
-        # Video properties
+        # Get video metadata
         fps = float(video_stream.average_rate)
         total_frames = video_stream.frames
         width = video_stream.width
         height = video_stream.height
-        
         step = self._compute_sampling_step(fps)
         
         logger.info(
@@ -157,12 +156,12 @@ class OptimizedVideoProcessor:
         if output_path:
             fourcc = cv2.VideoWriter_fourcc(*'mp4v')
             out_fps = fps if fps > 0 else max(1, self.fps_sample)
-            writer = cv2.VideoWriter(output_path, fourcc, float(out_fps), (width, height))
+            writer = cv2.VideoWriter(str(output_path), fourcc, float(out_fps), (width, height))
         
         # Analysis structures
         brand_acc: Dict[str, Dict] = {}
         frame_detections: List[Dict] = []
-        all_detections_for_db: List[Dict] = []
+        all_detections_for_db: List[DetectionCreate] = []
         
         # Reset performance counters
         self.total_detection_time = 0.0
@@ -193,34 +192,35 @@ class OptimizedVideoProcessor:
                     detections_tracked = self._track_detections(detections)
                     
                     # Process crops for database if needed
-                    if save_to_db and self.supabase:
+                    if save_to_db:
                         for det in detections_tracked:
                             # Extract crop
                             x1, y1, x2, y2 = det['bbox']
                             crop = frame_np[y1:y2, x1:x2]
                             
-                            # Upload crop and get URL
-                            crop_url = await self._upload_crop(
+                            # Upload crop using existing utility
+                            crop_url = crop_and_upload_detection(
                                 crop, f"{video_name}_{frame_idx}_{det['brand_name']}.jpg"
                             )
                             det['crop_url'] = crop_url
                             
-                            # Prepare for database
-                            all_detections_for_db.append({
-                                'video_name': video_name,
-                                'frame_number': frame_idx,
-                                'timestamp_seconds': timestamp,
-                                'brand_name': det['brand_name'],
-                                'confidence': det['confidence'],
-                                'bbox_x1': x1,
-                                'bbox_y1': y1,
-                                'bbox_x2': x2,
-                                'bbox_y2': y2,
-                                'image_crop_url': crop_url,
-                                'track_id': det.get('track_id'),
-                                'fps': fps,
-                                'detection_type': 'video'
-                            })
+                            # Prepare DetectionCreate object for database
+                            detection_data = DetectionCreate(
+                                video_name=video_name,
+                                frame_number=frame_idx,
+                                timestamp_seconds=timestamp,
+                                brand_name=det['brand_name'],
+                                confidence=det['confidence'],
+                                bbox_x1=x1,
+                                bbox_y1=y1,
+                                bbox_x2=x2,
+                                bbox_y2=y2,
+                                image_crop_url=crop_url,
+                                track_id=str(uuid4()) if det.get('track_id') else None,
+                                fps=fps,
+                                detection_type='video'
+                            )
+                            all_detections_for_db.append(detection_data)
                     
                     # Store frame-level detections
                     frame_info = {
@@ -251,13 +251,13 @@ class OptimizedVideoProcessor:
                         entry['detections'].append(det)
                         entry['max_confidence'] = max(entry['max_confidence'], conf)
                 
-                # Write annotated frame if needed
+                # Annotate frame for output video
                 if writer:
-                    if do_process and detections:
+                    if detections:
                         annotated_frame = self.annotate_image(frame_np, detections)
-                        writer.write(annotated_frame)
                     else:
-                        writer.write(frame_np)
+                        annotated_frame = frame_np
+                    writer.write(annotated_frame)
                 
                 frame_idx += 1
                 pbar.update(1)
@@ -283,20 +283,20 @@ class OptimizedVideoProcessor:
             )
         
         # Save to database if enabled
-        if save_to_db and self.supabase and all_detections_for_db:
-            await self._save_detections_batch(all_detections_for_db, video_name)
+        if save_to_db and all_detections_for_db:
+            try:
+                save_detections(all_detections_for_db)
+                logger.info(f"Saved {len(all_detections_for_db)} detections to database")
+            except Exception as e:
+                logger.error(f"Error saving detections to database: {e}")
         
         # Build results
         analysis_results = {
-            'video_info': {
-                'path': video_path,
-                'duration': duration,
-                'total_frames': total_frames,
+            'performance': {
+                'total_elapsed_seconds': total_elapsed,
                 'processed_frames': self.processed_frames,
-                'fps': fps,
-                'processing_time': self.total_detection_time,
-                'total_elapsed_time': total_elapsed,
-                'avg_processing_time_per_frame': (
+                'fps_processed': self.processed_frames / total_elapsed if total_elapsed > 0 else 0.0,
+                'avg_detection_time_per_frame': (
                     self.total_detection_time / self.processed_frames 
                     if self.processed_frames > 0 else 0.0
                 )
@@ -341,105 +341,10 @@ class OptimizedVideoProcessor:
         
         return detections
 
-    async def _upload_crop(self, crop_bgr: np.ndarray, filename: str) -> str:
-        """Upload detection crop to Supabase storage."""
-        if not self.supabase:
-            return ""
-        
-        try:
-            # Convert BGR to RGB and then to PIL
-            crop_rgb = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2RGB)
-            pil_img = Image.fromarray(crop_rgb)
-            
-            # Convert to bytes
-            buf = io.BytesIO()
-            pil_img.save(buf, format='JPEG', quality=90)
-            buf.seek(0)
-            img_bytes = buf.read()
-            
-            # Upload to Supabase
-            bucket_name = "crops"
-            res = self.supabase.storage.from_(bucket_name).upload(
-                filename, img_bytes, {"content-type": "image/jpeg"}
-            )
-            
-            if res.get("error"):
-                logger.error(f"Error uploading crop {filename}: {res['error']}")
-                return ""
-            
-            # Get public URL
-            public_url_res = self.supabase.storage.from_(bucket_name).get_public_url(filename)
-            return public_url_res.get("publicUrl", "")
-        
-        except Exception as e:
-            logger.error(f"Error processing crop upload: {e}")
-            return ""
-
-    async def _save_detections_batch(self, detections: List[Dict], video_name: str):
-        """Save detections to Supabase in batch."""
-        if not self.supabase or not detections:
-            return
-        
-        try:
-            # Insert detections in batch
-            result = self.supabase.table("detections").insert(detections).execute()
-            if result.data:
-                logger.info(f"Saved {len(detections)} detections for {video_name}")
-            
-            # Update detection events
-            await self._update_detection_events(video_name)
-            
-        except Exception as e:
-            logger.error(f"Error saving detections: {e}")
-
-    async def _update_detection_events(self, video_name: str):
-        """Update detection_events table from detections."""
-        if not self.supabase:
-            return
-        
-        try:
-            # Use RPC function or direct query to aggregate detection events
-            # This assumes you have a stored procedure or can execute raw SQL
-            query = """
-            INSERT INTO detection_events (
-                video_name, brand_name, track_id,
-                start_frame, end_frame, total_frames,
-                min_confidence, max_confidence, avg_confidence,
-                first_detected, last_detected
-            )
-            SELECT
-                video_name, brand_name, track_id,
-                MIN(frame_number) as start_frame,
-                MAX(frame_number) as end_frame,
-                COUNT(*) as total_frames,
-                MIN(confidence) as min_confidence,
-                MAX(confidence) as max_confidence,
-                AVG(confidence) as avg_confidence,
-                MIN(created_at) as first_detected,
-                MAX(created_at) as last_detected
-            FROM detections
-            WHERE video_name = %s
-              AND track_id IS NOT NULL
-            GROUP BY video_name, brand_name, track_id
-            ON CONFLICT (video_name, brand_name, track_id) 
-            DO UPDATE SET
-                end_frame = EXCLUDED.end_frame,
-                total_frames = EXCLUDED.total_frames,
-                max_confidence = EXCLUDED.max_confidence,
-                avg_confidence = EXCLUDED.avg_confidence,
-                last_detected = EXCLUDED.last_detected
-            """
-            
-            # Note: You'll need to implement this based on your Supabase setup
-            # This might require a stored procedure or RPC function
-            logger.info(f"Detection events updated for {video_name}")
-            
-        except Exception as e:
-            logger.error(f"Error updating detection events: {e}")
-
 
 # Usage example
 async def main():
+    """Example usage of OptimizedVideoProcessor."""
     # Initialize processor
     config = {
         'video_processing': {
@@ -458,7 +363,6 @@ async def main():
     )
     
     print(f"Detected brands: {results['summary']['brands_found']}")
-    print(f"Total detections: {results['summary']['total_detections']}")
 
 
 if __name__ == "__main__":
