@@ -14,7 +14,7 @@ def sanitize_for_path(text: str) -> str:
 # Función para recortar la imagen de la marca detectada, y luego subir ese recorte al storage de supabase.
 def crop_and_upload_detection(img: np.ndarray, det: Dict, prefix: str) -> Optional[str]:
     safe_prefix = sanitize_for_path(prefix)
-    x1, y1, x2, y2 = map(int, det["box"])
+    x1, y1, x2, y2 = map(int, det["bbox"])
     h, w = img.shape[:2]
     
     x1 = max(0, min(x1, w - 1))
@@ -30,9 +30,9 @@ def crop_and_upload_detection(img: np.ndarray, det: Dict, prefix: str) -> Option
     
     if not ok:
         return None
-        
-    storage_path = f"{safe_prefix}/{uuid4().hex}_{sanitize_for_path(det['class_name'])}.jpg"
-    
+
+    storage_path = f"{safe_prefix}/{uuid4().hex}_{sanitize_for_path(det['brand_name'])}.jpg"
+
     return upload_public_bytes(
         bucket=settings.BUCKET_CROPS,
         path=storage_path,
