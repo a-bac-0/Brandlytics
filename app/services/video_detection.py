@@ -1,121 +1,144 @@
-from __future__ import annotations
-import os
-import tempfile
-from pathlib import Path
-from typing import List, Dict, Optional
-import cv2
-import requests
-from app.utils.image_processing import crop_and_upload_detection
-from app.services.image_detection import ImageDetectionService
-from app.api.schemas.schemas_detection import DetectionCreate
-from uuid import uuid4
+"""
+Video Detection Service
+Handles video processing for brand detection following the same patterns as ImageDetectionService.
+"""
 
-try:
-    import yt_dlp
-except ImportError:
-    yt_dlp = None
+import logging
+from pathlib import Path
+from typing import Dict, List, Optional, Union
+from datetime import datetime
+
+from app.utils.video_processor import OptimizedVideoProcessor
+from app.database.operations import save_detections
+from app.api.schemas.schemas_detection import DetectionCreate
+from app.config.model_config import settings
+
+logger = logging.getLogger(__name__)
+
 
 class VideoDetectionService:
-    def __init__(self, image_service: ImageDetectionService):
-        self.image_service = image_service
-        self.model = image_service.model
-        self.class_names = getattr(self.model, "names", {})
-
-    def _get_video_bytes_from_url(self, url: str) -> tuple[bytes, str]:
-        url_lower = url.lower()
-        if "youtube.com" in url_lower or "youtu.be" in url_lower:
-            if not yt_dlp:
-                raise RuntimeError("Para URLs de YouTube, instala 'yt-dlp': pip install yt-dlp")
-            
-            with tempfile.TemporaryDirectory() as tmpdir:
-                ydl_opts = {
-                    "format": "best[ext=mp4]/best",
-                    "outtmpl": os.path.join(tmpdir, "%(title)s.%(ext)s"),
-                    "quiet": True,
+    """
+    Service for video brand detection.
+    Follows the same patterns as ImageDetectionService for consistency.
+    """
+    
+    _instance = None
+    _processor = None
+    
+    def __new__(cls):
+        """Singleton pattern to ensure single instance across the application."""
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+    
+    def __init__(self):
+        """Initialize the video detection service."""
+        if self._processor is None:
+            # Initialize with default config
+            config = {
+                'video_processing': {
+                    'fps_sample': getattr(settings, 'VIDEO_FPS_SAMPLE', 1)
                 }
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    info = ydl.extract_info(url, download=True)
-                    file_path = ydl.prepare_filename(info)
-                
-                with open(file_path, "rb") as f:
-                    video_bytes = f.read()
-                filename = os.path.basename(file_path)
-                return video_bytes, filename
-        else:
-            response = requests.get(url, timeout=120)
-            response.raise_for_status()
-            filename = os.path.basename(url.split("?")[0]) or "video_from_url.mp4"
-            return response.content, filename
-
-    def process_video_input(self, video_file_bytes: Optional[bytes], filename: Optional[str], video_url: Optional[str]) -> Dict:
-        if video_url:
-            video_file_bytes, filename = self._get_video_bytes_from_url(video_url)
+            }
+            self._processor = OptimizedVideoProcessor(config)
+            logger.info("VideoDetectionService initialized")
+    
+    async def process_video_file(
+        self,
+        video_path: Union[str, Path],
+        video_name: Optional[str] = None,
+        save_to_db: bool = True,
+        max_frames: Optional[int] = None,
+        output_path: Optional[Union[str, Path]] = None
+    ) -> Dict:
+        """
+        Process a video file for brand detection.
         
-        if not video_file_bytes:
-            raise ValueError("No se proporcionaron datos de vídeo.")
+        Args:
+            video_path: Path to the video file
+            video_name: Name for database entries (defaults to filename)
+            save_to_db: Whether to save detections to database
+            max_frames: Maximum frames to process (for testing)
+            output_path: Path for annotated output video
         
-        if not filename:
-            filename = "video.mp4"
-
-        return self._process_frames(
-            video_bytes=video_file_bytes,
-            filename=filename,
-            frame_step=10,
-            conf=0.25,
-            iou=0.6,
-            save_crops=True
-        )
-
-    def _process_frames(self, video_bytes: bytes, filename: str, frame_step: int, conf: float, iou: float, save_crops: bool) -> Dict:
-        suffix = Path(filename).suffix or ".mp4"
-        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-            tmp.write(video_bytes)
-            tmp_path = tmp.name
-
-        cap = cv2.VideoCapture(tmp_path)
-        if not cap.isOpened():
-            raise RuntimeError("No se pudo abrir el vídeo.")
-
-        fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
-        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
-        
-        detections_to_save: List[DetectionCreate] = []
-        frame_idx = 0
-        
+        Returns:
+            Dictionary with processing results and statistics
+        """
         try:
-            while True:
-                ret, frame = cap.read()
-                if not ret:
-                    break
-
-                if frame_idx % frame_step == 0:
-                    results = self.image_service.detect_brands(frame, conf=conf, iou=iou)
-                    
-                    for det in results:
-                        crop_url = None
-                        if save_crops:
-                            crop_url = crop_and_upload_detection(frame, det, f"videos/{Path(filename).stem}")
-
-                        detections_to_save.append(DetectionCreate(
-                            video_name=filename,
-                            frame_number=frame_idx,
-                            timestamp_seconds=round(frame_idx / fps, 3),
-                            brand_name=det["class_name"],
-                            confidence=det["confidence"],
-                            bbox_x1=det["box"][0], bbox_y1=det["box"][1],
-                            bbox_x2=det["box"][2], bbox_y2=det["box"][3],
-                            image_crop_url=crop_url,
-                            fps=fps,
-                            detection_type="video"
-                        ))
-                frame_idx += 1
-        finally:
-            cap.release()
-            os.unlink(tmp_path)
-
+            logger.info(f"Starting video processing for: {video_path}")
+            
+            # Process the video
+            results = await self._processor.process_video(
+                video_path=video_path,
+                video_name=video_name,
+                save_to_db=save_to_db,
+                max_frames=max_frames,
+                output_path=output_path,
+                show_progress=True
+            )
+            
+            # Add metadata
+            results['metadata'] = {
+                'processed_at': datetime.now().isoformat(),
+                'video_name': video_name or Path(video_path).stem,
+                'service_version': '1.0.0'
+            }
+            
+            logger.info(f"Video processing completed successfully. Brands found: {results['summary']['brands_found']}")
+            return results
+            
+        except Exception as e:
+            logger.error(f"Error processing video {video_path}: {str(e)}")
+            raise
+    
+    async def process_video_batch(
+        self,
+        video_paths: List[Union[str, Path]],
+        save_to_db: bool = True,
+        max_frames: Optional[int] = None
+    ) -> Dict[str, Dict]:
+        """
+        Process multiple video files in batch.
+        
+        Args:
+            video_paths: List of video file paths
+            save_to_db: Whether to save detections to database
+            max_frames: Maximum frames to process per video
+        
+        Returns:
+            Dictionary mapping video names to their processing results
+        """
+        results = {}
+        
+        for video_path in video_paths:
+            try:
+                video_name = Path(video_path).stem
+                result = await self.process_video_file(
+                    video_path=video_path,
+                    video_name=video_name,
+                    save_to_db=save_to_db,
+                    max_frames=max_frames
+                )
+                results[video_name] = result
+                
+            except Exception as e:
+                logger.error(f"Failed to process video {video_path}: {str(e)}")
+                results[str(video_path)] = {
+                    'error': str(e),
+                    'status': 'failed'
+                }
+        
+        return results
+    
+    def get_processor_stats(self) -> Dict:
+        """Get current processor statistics."""
         return {
-            "filename": filename,
-            "fps": fps,
-            "total_frames": total_frames,
-            "detections_to_save": detections_to_save
+            'total_detection_time': self._processor.total_detection_time,
+            'processed_frames': self._processor.processed_frames,
+            'active_tracks': len(self._processor.active_tracks),
+            'model_path': settings.MODEL_PATH
         }
+
+
+# Singleton instance
+video_detection_service = VideoDetectionService()
