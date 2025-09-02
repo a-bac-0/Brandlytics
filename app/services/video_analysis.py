@@ -28,21 +28,42 @@ class VideoAnalysisService:
     Handles any video format and provides comprehensive analytics.
     """
     
-    def __init__(self, model_path: str = None):
+    def __init__(self, model_path: str = None, use_hf_model: bool = None):
         """Initialize the video analysis service."""
+        self.use_hf_model = use_hf_model if use_hf_model is not None else settings.USE_HF_MODEL
         self.model_path = model_path or settings.MODEL_PATH
         self.model = None
         self._load_model()
     
     def _load_model(self) -> None:
-        """Load the YOLO model for brand detection."""
+        """Load the YOLO model for brand detection from local path or Hugging Face Hub."""
         try:
-            logger.info(f"Loading YOLO model from: {self.model_path}")
-            self.model = YOLO(self.model_path)
-            logger.info("✅ YOLO model loaded successfully")
+            if self.use_hf_model:
+                logger.info(f"Loading YOLO model from Hugging Face Hub: {settings.HF_MODEL_REPO}")
+                try:
+                    from app.services.huggingface_service import get_hf_model_service
+                    hf_service = get_hf_model_service()
+                    self.model = hf_service.load_yolo_from_hf(settings.HF_MODEL_REPO)
+                    logger.info("✅ YOLO model loaded successfully from Hugging Face Hub")
+                except ImportError:
+                    logger.warning("Hugging Face service not available, falling back to local model")
+                    self.use_hf_model = False
+                    self._load_local_model()
+                except Exception as e:
+                    logger.error(f"Failed to load HF model, falling back to local: {e}")
+                    self.use_hf_model = False
+                    self._load_local_model()
+            else:
+                self._load_local_model()
         except Exception as e:
             logger.error(f"❌ Failed to load model: {e}")
             raise RuntimeError(f"Model loading failed: {e}")
+    
+    def _load_local_model(self) -> None:
+        """Load YOLO model from local path."""
+        logger.info(f"Loading YOLO model from local path: {self.model_path}")
+        self.model = YOLO(self.model_path)
+        logger.info("✅ YOLO model loaded successfully from local path")
     
     def get_video_info(self, video_path: str) -> Dict:
         """Extract basic video information."""

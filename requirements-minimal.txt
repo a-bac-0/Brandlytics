@@ -11,3 +11,7 @@ av
 python-multipart
 python-dotenv
 pydantic
+
+# Hugging Face Hub Integration
+huggingface_hub
+transformers
