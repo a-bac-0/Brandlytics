@@ -7,6 +7,13 @@ load_dotenv()
 class Settings:
     # Configuración del Modelo
     MODEL_PATH: str = os.getenv("MODEL_PATH", "models/best2.pt")
+    
+    # Hugging Face Configuration
+    HF_TOKEN: str = os.getenv("HF_TOKEN")
+    HF_ORG: str = os.getenv("HF_ORG", "CV-Brandlytics")
+    HF_MODEL_REPO: str = os.getenv("HF_MODEL_REPO", "CV-Brandlytics/ModelM")
+    USE_HF_MODEL: bool = os.getenv("USE_HF_MODEL", "false").lower() == "true"
+    HF_CACHE_DIR: str = os.getenv("HF_CACHE_DIR", "models/hf_cache")
 
     # Configuración de Supabase
     SUPABASE_URL: str = os.getenv("SUPABASE_URL")
