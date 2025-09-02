@@ -1,12 +1,18 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
+from typing import List
+from app.database.operations import get_video_detections_byname
+from app.services.analytics_service import AnalyticsService
+
 
 router = APIRouter()
+analytics_service = AnalyticsService()
 
-# Cuando sepamos qué analítica realizaremos lo modificaremos.
-
-@router.get("/results/{video_name}")
+@router.get("/analysis/{video_name}", summary="Obtener análisis de vídeo")
 async def get_analytics_for_video(video_name: str):
-    return {
-        "message": f"Obteniendo analíticas para el vídeo: {video_name}",
-        "data": [] # Los datos vendrán de la base de datos en el futuro, cuando lo tengamos
-    }
+    detections = get_video_detections_byname(video_name)
+    if not detections:
+        raise HTTPException(status_code=404, detail=f"No se encontraron detecciones para el video : {video_name}")
+
+    analysis_summary = analytics_service.calculate_video_summary(detections, video_name)
+
+    return analysis_summary

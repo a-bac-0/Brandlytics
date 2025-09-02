@@ -11,6 +11,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import pandas as pd
+from PIL import Image, ImageOps
 
 # Page configuration
 st.set_page_config(
@@ -89,15 +90,23 @@ def detect_brands_in_video(video_file, save_to_db=True):
         st.error(f"Error processing video: {e}")
         return None
 
-def draw_detections_on_image(image, detections):
+def draw_detections_on_image(image, detections, original_shape, resized_shape):
     """Draw bounding boxes on image"""
-    for detection in detections:
-        bbox = detection["bbox"]
-        brand_name = detection["brand_name"]
+    original_height, original_width = original_shape
+    resized_height, resized_width = resized_shape
+    width_scale = resized_width / original_width
+    height_scale = resized_height / original_height
+    for detection in detections.get("detections", []):
+        bbox = detection["box"]
+        brand_name = detection["class_name"]
         confidence = detection["confidence"]
         
         # Convert coordinates to int
-        x1, y1, x2, y2 = map(int, bbox)
+        x1_orig, y1_orig, x2_orig, y2_orig = map(int, bbox)
+        x1 = int(x1_orig * width_scale)
+        y1 = int(y1_orig * height_scale)
+        x2 = int(x2_orig * width_scale)
+        y2 = int(y2_orig * height_scale)
         
         # Draw rectangle
         cv2.rectangle(image, (x1, y1), (x2, y2), (0, 255, 0), 2)
@@ -230,7 +239,8 @@ def main():
             "",
             ["📁 Subir archivo", "🌐 URL de imagen"],
             key="input_method",
-            horizontal=True
+            horizontal=True,
+            label_visibility="collapsed"
         )
         
         st.divider()
@@ -248,8 +258,9 @@ def main():
             
             if uploaded_image is not None:
                 # Cargar imagen para mostrar
-                uploaded_image.seek(0)
-                image = cv2.imdecode(np.frombuffer(uploaded_image.read(), np.uint8), 1)
+                pil_image = Image.open(uploaded_image).convert("RGB")
+                pil_image = ImageOps.exif_transpose(pil_image)
+                image = cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGB2BGR)
                 
                 # Mostrar imagen original y botón
                 st.divider()
@@ -295,23 +306,19 @@ def main():
                         
                         if detection_results:
                             # Convertir resultados al formato esperado
-                            detections_formatted = []
-                            for detection in detection_results.get("detections", []):
-                                formatted_detection = {
-                                    "brand_name": detection["class_name"],
-                                    "confidence": detection["confidence"],
-                                    "bbox": detection["box"],
-                                    "class_id": detection["class_id"]
-                                }
-                                detections_formatted.append(formatted_detection)
+                            if detection_results.get("detections"):
                             
-                            if detections_formatted:
                                 # Usar la imagen redimensionada para las detecciones
-                                annotated_image = draw_detections_on_image(image_resized.copy(), detections_formatted)
+                                annotated_image = draw_detections_on_image(
+                                    image_resized.copy(), 
+                                    detection_results,
+                                    original_shape=image.shape[:2],
+                                    resized_shape=image_resized.shape[:2]
+                                )
                                 st.image(cv2.cvtColor(annotated_image, cv2.COLOR_BGR2RGB), use_container_width=True)
                                 
                                 # Mostrar número de detecciones
-                                st.success(f"✅ {len(detections_formatted)} marca(s) detectada(s)")
+                                st.success(f"✅ {len(detection_results['detections'])} marca(s) detectada(s)")
                             else:
                                 # Mostrar imagen original si no hay detecciones
                                 st.image(cv2.cvtColor(image_resized, cv2.COLOR_BGR2RGB), use_container_width=True)
@@ -334,9 +341,11 @@ def main():
             if image_url:
                 try:
                     # Cargar imagen para procesamiento local
-                    response = requests.get(image_url)
-                    image = cv2.imdecode(np.frombuffer(response.content, np.uint8), 1)
-                    
+                    response = requests.get(image_url, stream=True)
+                    response.raise_for_status()
+                    pil_image = Image.open(response.raw).convert("RGB")
+                    pil_image = ImageOps.exif_transpose(pil_image)
+                    image = cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGB2BGR)
                     # Mostrar imagen y botón
                     st.divider()
                     st.markdown("### 🖼️ Análisis Visual")
@@ -380,23 +389,17 @@ def main():
                             
                             if detection_results:
                                 # Convertir resultados al formato esperado
-                                detections_formatted = []
-                                for detection in detection_results.get("detections", []):
-                                    formatted_detection = {
-                                        "brand_name": detection["class_name"],
-                                        "confidence": detection["confidence"],
-                                        "bbox": detection["box"],
-                                        "class_id": detection["class_id"]
-                                    }
-                                    detections_formatted.append(formatted_detection)
-                                
-                                if detections_formatted:
-                                    # Usar la imagen redimensionada para las detecciones
-                                    annotated_image = draw_detections_on_image(image_resized.copy(), detections_formatted)
+                                if detection_results.get("detections"):
+                                    annotated_image = draw_detections_on_image(
+                                        image_resized.copy(), 
+                                        detection_results,
+                                        original_shape=image.shape[:2],
+                                        resized_shape=image_resized.shape[:2]
+                                    )
                                     st.image(cv2.cvtColor(annotated_image, cv2.COLOR_BGR2RGB), use_container_width=True)
-                                    
-                                    # Mostrar número de detecciones
-                                    st.success(f"✅ {len(detections_formatted)} marca(s) detectada(s)")
+                                    st.success(f"✅ {len(detection_results['detections'])} marca(s) detectada(s)")
+                                
+                                
                                 else:
                                     # Mostrar imagen original si no hay detecciones
                                     st.image(cv2.cvtColor(image_resized, cv2.COLOR_BGR2RGB), use_container_width=True)
@@ -508,7 +511,8 @@ def main():
             "",
             ["📁 Subir archivo de video", "🌐 URL de video"],
             key="video_input_method",
-            horizontal=True
+            horizontal=True,
+            label_visibility="collapsed"
         )
         
         st.divider()

@@ -20,7 +20,10 @@ def save_detections(detections_data: List[DetectionCreate]):
         print(f"Error en la operación de base de datos: {e}")
         raise e
 
-
+def get_video_detections_byname(video_name: str) -> List[dict]:
+    supabase = get_supabase()
+    response = supabase.table("detections").select("*").eq("video_name", video_name).eq("detection_type", "video").execute()
+    return response.data
 
 def upload_public_bytes(bucket: str, path: str, content: bytes, content_type: str = "image/jpeg") -> str:
     supabase = get_supabase()
