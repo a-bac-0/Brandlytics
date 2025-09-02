@@ -6,7 +6,7 @@ load_dotenv()
 
 class Settings:
     # Configuración del Modelo
-    MODEL_PATH: str = os.getenv("MODEL_PATH", "models/best.pt")
+    MODEL_PATH: str = os.getenv("MODEL_PATH", "models/best2.pt")
 
     # Configuración de Supabase
     SUPABASE_URL: str = os.getenv("SUPABASE_URL")

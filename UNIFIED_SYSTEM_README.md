@@ -11,7 +11,6 @@ You now have a **single, professional, modular video analysis solution** that re
 ├── 📄 video_analyzer.py                    # Professional CLI interface
 ├── 📄 examples.py                          # Usage examples and demos
 ├── 📄 test_system.py                       # System verification tests
-├── 📄 video_analysis_config.yaml           # Configuration template
 └── 📁 app/
     ├── 📁 services/
     │   └── 📄 video_analysis.py             # Core analysis service
@@ -236,7 +235,7 @@ python video_analyzer.py compare \
 
 ## 🚀 Next Steps
 
-1. **Customize Configuration**: Edit `video_analysis_config.yaml` for your needs
+1. **Customize Configuration**: Generate template with `python -c "from app.config.video_analysis_config import create_config_template; create_config_template()"`
 2. **Integrate with API**: Import `VideoAnalysisService` into your FastAPI routes
 3. **Automate Workflows**: Use CLI commands in scripts or CI/CD
 4. **Extend Functionality**: Add new features to the modular architecture
