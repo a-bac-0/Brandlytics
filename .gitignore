@@ -22,11 +22,33 @@ MANIFEST
 
 # PyTorch
 *.pth
+*.pt.bak
+*.pt.tmp
+
+# TensorFlow
+*.pb
+*.tflite
+saved_model/
+checkpoints/
+
+# ONNX
+*.onnx
+
+# Model caches and temporary files
+*.cache
+cache/
+.cache/
 
 
 # Data files
 data/processed_yolo/
 data/annotations/
+data/cache/
+data/temp/
+data/downloads/
+*.csv.bak
+*.json.bak
+*.yaml.bak
 
 
 # Excepciones para incluir imágenes en data/raw
@@ -36,8 +58,13 @@ data/annotations/
 # Model files
 models/trained/
 models/pretrained/
+models/downloaded/
+models/temp/
 *.weights
 *.h5
+*.safetensors
+*.bin
+*.msgpack
 
 # Environment
 .env
@@ -66,19 +93,100 @@ Thumbs.db
 
 # Jupyter
 .ipynb_checkpoints
+*.ipynb.bak
+*.ipynb.tmp
 
-# Logs
-logs/
-*.log
+# MLflow
+mlruns/
+mlartifacts/
+
+# Weights & Biases
 wandb/
+*.wandb
+
+# TensorBoard
+runs/
+logs/
+tensorboard_logs/
 
 # Database
 *.db
 *.sqlite
+*.sqlite3
+*.db-journal
+
+# Video/Image processing cache
+*.mp4.cache
+*.avi.cache
+*.mov.cache
+ffmpeg_cache/
+opencv_cache/
+video_cache/
+processed_frames/
+thumbnails/
+previews/
 
 # Hugging Face cache
 models/hf_cache/
+.huggingface/
+transformers_cache/
+
+# Other ML framework caches
+.torch/
+.keras/
+.tensorflow/
+.sklearn_cache/
+.ultralytics/
+ultralytics_cache/
+
+# API and service caches
+.requests_cache/
+.httpx_cache/
+fastapi_cache/
 
 # Temporary files
 tmp/
 temp/
+*.tmp
+*.temp
+*.bak
+*.backup
+*.orig
+*.swp
+*.swo
+*~
+
+# Test artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+coverage.xml
+*.cover
+.nyc_output
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Docker and deployment
+.dockerignore.bak
+docker-compose.override.yml
+docker-compose.local.yml
+.docker/
+volumes/
+docker_data/
+
+# Cloud deployment artifacts
+.aws/
+.gcp/
+.azure/
+deployment_logs/
+kubernetes_temp/
+
+# Performance monitoring
+.profile
+*.prof
+profile_output/
