@@ -1,8 +1,3 @@
-"""
-Professional Video Analysis Service for Brandlytics
-Unified, modular, and scalable video processing system.
-"""
-
 import cv2
 import time
 import json
@@ -17,6 +12,14 @@ from app.api.schemas.schemas_detection import DetectionCreate
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+try:
+    from app.services.analytics_service import AnalyticsService
+    ANALYTICS_SERVICE_AVAILABLE = True
+    logger.info("✅ Team's AnalyticsService available for enhanced reporting")
+except ImportError:
+    ANALYTICS_SERVICE_AVAILABLE = False
+    logger.warning("Team's AnalyticsService not available - using basic analytics only")
 
 
 class VideoAnalysisService:
@@ -52,8 +55,7 @@ class VideoAnalysisService:
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         duration = total_frames / fps if fps > 0 else 0
         
-        # Get file size
-        file_size = Path(video_path).stat().st_size / (1024 * 1024)  # MB
+        file_size = Path(video_path).stat().st_size / (1024 * 1024)
         
         cap.release()
         
@@ -75,18 +77,17 @@ class VideoAnalysisService:
         total_frames = video_info['total_frames']
         duration = video_info['duration_seconds']
         
-        # Default sampling strategies
         if max_frames:
             sampling_interval = max(1, total_frames // max_frames)
             frames_to_process = min(max_frames, total_frames)
-        elif duration > 300:  # 5+ minutes
-            sampling_interval = 15  # Process every 15th frame
+        elif duration > 300:
+            sampling_interval = 15
             frames_to_process = total_frames // sampling_interval
-        elif duration > 60:   # 1+ minutes
-            sampling_interval = 10  # Process every 10th frame
+        elif duration > 60:
+            sampling_interval = 10
             frames_to_process = total_frames // sampling_interval
-        else:                 # Short videos
-            sampling_interval = 5   # Process every 5th frame
+        else:
+            sampling_interval = 5
             frames_to_process = total_frames // sampling_interval
         
         logger.info(f"Sampling strategy: every {sampling_interval} frames, processing {frames_to_process} frames")
@@ -115,17 +116,14 @@ class VideoAnalysisService:
         """
         start_time = time.time()
         
-        # Get video information
         video_info = self.get_video_info(video_path)
         logger.info(f"🎬 Processing video: {video_name}")
         logger.info(f"📊 Duration: {video_info['duration_seconds']:.1f}s, "
                    f"Size: {video_info['file_size_mb']:.1f}MB, "
                    f"FPS: {video_info['fps']:.1f}")
         
-        # Calculate sampling strategy
         sampling_interval, frames_to_process = self.calculate_optimal_sampling(video_info, max_frames)
         
-        # Initialize tracking variables
         detections_list = []
         detections_for_db = []
         processed_frames = 0
@@ -133,7 +131,6 @@ class VideoAnalysisService:
         brands_detected = set()
         frame_stats = {'with_detections': 0, 'without_detections': 0}
         
-        # Open video
         cap = cv2.VideoCapture(video_path)
         
         try:
@@ -143,17 +140,14 @@ class VideoAnalysisService:
                 if not ret:
                     break
                 
-                # Process frames according to sampling strategy
                 if frame_idx % sampling_interval == 0:
                     timestamp = frame_idx / video_info['fps']
                     
-                    # Run YOLO detection
                     detection_start = time.time()
                     results = self.model(frame, verbose=False)
                     detection_time = time.time() - detection_start
                     total_detection_time += detection_time
                     
-                    # Process detection results
                     frame_detections = self._process_frame_detections(
                         results, frame_idx, timestamp, video_name, confidence_threshold
                     )
@@ -162,11 +156,9 @@ class VideoAnalysisService:
                         frame_stats['with_detections'] += 1
                         detections_list.extend(frame_detections)
                         
-                        # Collect brands
                         for det in frame_detections:
                             brands_detected.add(det['brand_name'])
                         
-                        # Prepare for database
                         if save_to_database:
                             db_detections = self._prepare_detections_for_db(frame_detections)
                             detections_for_db.extend(db_detections)
@@ -182,12 +174,10 @@ class VideoAnalysisService:
         finally:
             cap.release()
         
-        # Save to database in batches
         detections_saved = 0
         if save_to_database and detections_for_db:
             detections_saved = self._save_detections_batch(detections_for_db)
         
-        # Calculate final metrics
         processing_time = time.time() - start_time
         results = self._compile_results(
             video_name, video_info, detections_list, brands_detected,
@@ -255,7 +245,7 @@ class VideoAnalysisService:
                 bbox_y1=y1,
                 bbox_x2=x2,
                 bbox_y2=y2,
-                crop_url=None  # Can be enhanced later
+                crop_url=None
             )
             
             db_detections.append(db_detection)
@@ -311,7 +301,6 @@ class VideoAnalysisService:
             brand_analysis[brand]['timestamps'].append(det['timestamp_seconds'])
             brand_analysis[brand]['bbox_areas'].append(det['bbox_area'])
         
-        # Calculate averages and durations
         for brand, stats in brand_analysis.items():
             stats['avg_confidence'] = stats['confidence_sum'] / stats['count']
             stats['avg_bbox_area'] = sum(stats['bbox_areas']) / len(stats['bbox_areas'])
@@ -324,17 +313,24 @@ class VideoAnalysisService:
                 stats['first_appearance'] = stats['timestamps'][0] if stats['timestamps'] else 0
                 stats['last_appearance'] = stats['timestamps'][0] if stats['timestamps'] else 0
             
-            # Clean up temporary fields
             del stats['confidence_sum']
             del stats['bbox_areas']
         
-        # Time distribution analysis
         time_distribution = {}
         for det in detections:
-            time_segment = int(det['timestamp_seconds'] // 10) * 10  # 10-second intervals
+            time_segment = int(det['timestamp_seconds'] // 10) * 10
             time_distribution[time_segment] = time_distribution.get(time_segment, 0) + 1
         
-        return {
+        enhanced_analytics = None
+        if ANALYTICS_SERVICE_AVAILABLE and detections:
+            try:
+                analytics_service = AnalyticsService()
+                enhanced_analytics = analytics_service.calculate_video_summary(detections, video_name)
+                logger.info(f"✅ Enhanced analytics calculated: screen time analysis for {len(enhanced_analytics.get('analysis_summary', []))} brands")
+            except Exception as e:
+                logger.warning(f"Could not calculate enhanced analytics: {e}")
+        
+        base_results = {
             'video_info': video_info,
             'processing_info': {
                 'video_name': video_name,
@@ -358,11 +354,43 @@ class VideoAnalysisService:
             },
             'brand_analysis': brand_analysis,
             'time_distribution': time_distribution,
-            'sample_detections': detections[:10]  # First 10 detections as examples
+            'sample_detections': detections[:10]
         }
+        
+        if enhanced_analytics:
+            base_results['enhanced_analytics'] = enhanced_analytics
+        
+        return base_results
+    
+    def get_existing_video_analytics(self, video_name: str) -> Dict:
+        """
+        Get enhanced analytics for a previously processed video using team's database functions.
+        Integrates with team's get_video_detections_byname and get_video_analytics functions.
+        """
+        try:
+            from app.database.operations import get_video_detections_byname, get_video_analytics
+            
+            basic_analytics = get_video_analytics(video_name)
+            
+            detections = get_video_detections_byname(video_name)
+            
+            # Add enhanced analytics if available and we have detection data
+            if ANALYTICS_SERVICE_AVAILABLE and detections:
+                try:
+                    analytics_service = AnalyticsService()
+                    enhanced_analytics = analytics_service.calculate_video_summary(detections, video_name)
+                    basic_analytics['enhanced_analytics'] = enhanced_analytics
+                    logger.info(f"✅ Retrieved enhanced analytics for {video_name}: screen time data for {len(enhanced_analytics.get('analysis_summary', []))} brands")
+                except Exception as e:
+                    logger.warning(f"Could not calculate enhanced analytics for existing video: {e}")
+            
+            return basic_analytics
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to get existing video analytics: {e}")
+            return {"error": f"Failed to retrieve analytics: {str(e)}"}
 
 
-# Convenience functions for easy usage
 def analyze_video(
     video_path: str,
     video_name: str = None,
@@ -426,3 +454,18 @@ def analyze_video_folder(
             results[video_file.name] = {'error': str(e)}
     
     return results
+
+
+def get_video_analytics_enhanced(video_name: str) -> Dict:
+    """
+    Convenience function to get enhanced analytics for a processed video.
+    Combines basic database analytics with team's screen time analysis.
+    
+    Args:
+        video_name: Name of the processed video
+        
+    Returns:
+        Enhanced analytics dictionary including screen time data
+    """
+    service = VideoAnalysisService()
+    return service.get_existing_video_analytics(video_name)
