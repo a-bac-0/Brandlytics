@@ -54,9 +54,9 @@ class ImageDetectionService:
             x1, y1, x2, y2 = [int(v) for v in det.xyxy[0]]
             detection_data = {
                 "class_id": int(det.cls[0]),
-                "brand_name": self.model.names[int(det.cls[0])],
+                "class_name": self.model.names[int(det.cls[0])],
                 "confidence": float(det.conf[0]),
-                "bbox": [x1, y1, x2, y2]
+                "box": [x1, y1, x2, y2]
             }
             detections.append(detection_data)
 
@@ -78,10 +78,10 @@ class ImageDetectionService:
             detections_to_save.append(DetectionCreate(
                 video_name=filename,
                 frame_number=1,
-                brand_name=det["brand_name"],
+                brand_name=det["class_name"],
                 confidence=det["confidence"],
-                bbox_x1=det["bbox"][0], bbox_y1=det["bbox"][1],
-                bbox_x2=det["bbox"][2], bbox_y2=det["bbox"][3],
+                bbox_x1=det["box"][0], bbox_y1=det["box"][1],
+                bbox_x2=det["box"][2], bbox_y2=det["box"][3],
                 image_crop_url=crop_url,
                 detection_type="image"
             ))
