@@ -87,6 +87,7 @@ class ImageDetectionService:
             ))
         
         return {
+            "filename": filename,
             "detections": detections,
             "detections_to_save": detections_to_save
         }

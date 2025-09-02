@@ -33,7 +33,7 @@ async def process_image(
             db_status = f"{len(detections_to_save)} detecciones guardadas en Supabase."
         return {
             "status": "success", 
-            "filename": filename, 
+            "filename": result["filename"],
             "detections": result["detections"],
             "database_status": db_status  
         }
