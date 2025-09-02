@@ -76,6 +76,9 @@ wandb/
 *.db
 *.sqlite
 
+# Hugging Face cache
+models/hf_cache/
+
 # Temporary files
 tmp/
 temp/
