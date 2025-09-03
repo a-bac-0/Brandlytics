@@ -30,7 +30,7 @@ if 'processing' not in st.session_state:
     st.session_state.processing = False
 
 # API Configuration
-API_BASE_URL = "http://localhost:8000"
+API_BASE_URL = "http://127.0.0.1:8000"
 
 @st.cache_data(ttl=30)  # Cache for 30 seconds
 def check_api_status():
@@ -79,15 +79,15 @@ def detect_brands_in_image(image_file=None, image_url=None):
         st.error(f"Error detecting brands: {e}")
         return None
 
-def detect_brands_in_video(video_file, save_to_db=True):
+def detect_brands_in_video(video_file, save_to_db=True, frame_step=30):
     """Send video to API for brand detection"""
     try:
-        files = {"file": video_file}
-        data = {"save_to_db": save_to_db}
+        files = {"video_file": video_file}
+        data = {"save_to_db": save_to_db, "frame_step": frame_step}
         
         with st.spinner("Processing video... This may take a while."):
             response = requests.post(
-                f"{API_BASE_URL}/api/video/upload", 
+                f"{API_BASE_URL}/api/detection/process-video", 
                 files=files, 
                 data=data,
                 timeout=300  # 5 minute timeout
@@ -147,9 +147,14 @@ def detect_brands_in_video_url(video_url, video_name=None, save_to_db=True):
             return None
         
         with st.spinner("🔄 Downloading and processing video... This may take a while."):
+            data = {
+                "video_url": video_url,
+                "save_to_db": save_to_db,
+                "frame_step": 30  # Default frame step
+            }
             response = requests.post(
-                f"{API_BASE_URL}/api/video/process-url", 
-                params=params,
+                f"{API_BASE_URL}/api/detection/process-video", 
+                data=data,
                 timeout=600  # 10 minute timeout for URL processing
             )
         
@@ -692,9 +697,22 @@ def main():
                         st.write(f"**📁 Tamaño:** {file_size:.2f} MB")
                         st.write(f"**📝 Nombre:** {uploaded_video.name}")
                         
-<<<<<<< HEAD
-                        # Checkbox para guardar en BD
-                        save_to_db = st.checkbox("💾 Guardar análisis en base de datos", value=True, key="save_video_file")
+                        # Opciones de procesamiento
+                        st.markdown("#### ⚙️ Opciones de Procesamiento")
+                        col_a, col_b = st.columns(2)
+                        with col_a:
+                            save_to_db = st.checkbox("💾 Guardar análisis en BD", value=True)
+                        with col_b:
+                            processing_intensity = st.radio(
+                                "Intensidad de análisis:", 
+                                ["Básica (2 fps)", "Estándar (4 fps)", "Profesional (8 fps)"],
+                                index=1,
+                                horizontal=True,
+                                help="Básica: 2 frames/seg, Estándar: 4 frames/seg, Profesional: 8 frames/seg. Mayor fps = análisis más detallado pero más lento"
+                            )
+                            
+                            # Convertir selección a valor frame_step
+                            frame_step = 15 if processing_intensity == "Básica (2 fps)" else 8 if processing_intensity == "Estándar (4 fps)" else 3
                         
                         # Botón de análisis
                         analyze_button = st.button(
@@ -707,37 +725,8 @@ def main():
                         if analyze_button:
                             uploaded_video.seek(0)
                             with st.spinner("🔄 Procesando video... Esto puede tomar un tiempo..."):
-                                results = detect_brands_in_video(uploaded_video, save_to_db)
-=======
-
-                    st.markdown("#### ⚙️ Opciones de Procesamiento")
-                col_a, col_b = st.columns(2)
-                with col_a:
-                    save_to_db = st.checkbox("💾 Guardar análisis en BD", value=True)
-                with col_b:
-                    processing_intensity = st.radio(
-                        "Intensidad de análisis:", 
-                        ["Básica (2 fps)", "Estándar (4 fps)", "Profesional (8 fps)"],
-                        index=1,
-                        horizontal=True,
-                        help="Básica: 2 frames/seg, Estándar: 4 frames/seg, Profesional: 8 frames/seg. Mayor fps = análisis más detallado pero más lento"
-                    )
-                    
-                    # Convertir selección a valor frame_step
-                    frame_step = 15 if processing_intensity == "Básica (2 fps)" else 8 if processing_intensity == "Estándar (4 fps)" else 3
-                analyze_button = st.button(
-                    "🎬 Analizar Video", 
-                    key="analyze_video_file",
-                    type="primary",
-                    use_container_width=True
-                )
-                
-                if analyze_button:
-                    uploaded_video.seek(0)
-                    with st.spinner("🔄 Procesando video... Esto puede tomar un tiempo..."):
-                        # Usar frame_step en la función
-                        results = detect_brands_in_video(uploaded_video, save_to_db, frame_step)
->>>>>>> b8e15fedfeea0ac5f438690651c30cab5b0bb594
+                                # Usar frame_step en la función
+                                results = detect_brands_in_video(uploaded_video, save_to_db, frame_step)
                 
                 with col2:
                     st.markdown("#### 🎯 Resultados del Análisis")
@@ -822,10 +811,7 @@ def main():
                                 st.error(f"❌ Error al cargar el video: {e}")
                             st.markdown('</div>', unsafe_allow_html=True)
                             
-                            # Checkbox para guardar en BD
-<<<<<<< HEAD
-                            save_to_db = st.checkbox("💾 Guardar análisis en base de datos", value=True, key="save_video_url")
-=======
+                            # Opciones de procesamiento
                             st.markdown("#### ⚙️ Opciones de Procesamiento")
                             col_a, col_b = st.columns(2)
                             with col_a:
@@ -840,8 +826,6 @@ def main():
                                 )
 
                                 frame_step = 15 if processing_intensity == "Básica (2 fps)" else 8 if processing_intensity == "Estándar (4 fps)" else 3
-
->>>>>>> b8e15fedfeea0ac5f438690651c30cab5b0bb594
                             
                             # Botón de análisis
                             analyze_button = st.button(
@@ -964,8 +948,6 @@ def main():
             if results['brand_analysis']:
                 st.markdown("#### 🏷️ Resultados de Detección de Marcas")
                 
-<<<<<<< HEAD
-=======
                 # Agregar tarjetas de resumen de marcas
                 st.markdown("##### 🏷️ Resumen de Marcas")
                 
@@ -1009,7 +991,7 @@ def main():
                             </div>
                         </div>
                         """, unsafe_allow_html=True)
->>>>>>> b8e15fedfeea0ac5f438690651c30cab5b0bb594
+
                 # Crear visualizaciones
                 fig, df = create_brand_analysis_charts(
                     results['brand_analysis'], 

@@ -291,11 +291,19 @@ class VideoDetectionService:
         }
         processing_end = time.time()
         processing_time_seconds = processing_end - processing_start
+        
         return {
             "summary": summary,
             "detections": [d.model_dump() for d in detections_to_save],
             "detections_to_save": detections_to_save,
-            "processing_time_seconds": processing_time_seconds
+            "processing_time_seconds": processing_time_seconds,
+            "performance": {
+                "total_elapsed_seconds": processing_time_seconds,
+                "processed_frames": frame_idx // frame_step,
+                "fps": fps,
+                "frames_per_second_processed": (frame_idx // frame_step) / processing_time_seconds if processing_time_seconds > 0 else 0
+            },
+            "brand_detections": brand_counts
         }
     
     async def process_video_batch(
@@ -347,6 +355,64 @@ class VideoDetectionService:
                 results[str(video_path)] = {"error": str(e)}
         
         return results
+
+    async def process_video_file(
+        self,
+        video_path: Union[str, Path],
+        video_name: Optional[str] = None,
+        save_to_db: bool = True,
+        max_frames: Optional[int] = None,
+        frame_step: int = 30,
+        conf: float = 0.25,
+        iou: float = 0.6,
+        save_crops: bool = True
+    ) -> Dict:
+        """
+        Process a video file for brand detection.
+        
+        Args:
+            video_path: Path to the video file
+            video_name: Name for the video (optional)
+            save_to_db: Whether to save detections to database
+            max_frames: Maximum number of frames to process
+            frame_step: Number of frames to skip between processing
+            conf: Confidence threshold for detections
+            iou: IOU threshold for NMS
+            save_crops: Whether to save crops of detections
+            
+        Returns:
+            Dictionary with processing results and statistics
+        """
+        try:
+            # Read video file bytes
+            video_path = Path(video_path)
+            if not video_path.exists():
+                raise FileNotFoundError(f"Video file not found: {video_path}")
+            
+            with open(video_path, 'rb') as f:
+                video_file_bytes = f.read()
+            
+            # Use filename if video_name not provided
+            if not video_name:
+                video_name = video_path.stem
+            
+            # Process using existing method
+            result = await self.process_video_input(
+                video_file_bytes=video_file_bytes,
+                filename=video_path.name,
+                video_url=None,
+                save_to_db=save_to_db,
+                frame_step=frame_step,
+                conf=conf,
+                iou=iou,
+                save_crops=save_crops
+            )
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error processing video file {video_path}: {str(e)}")
+            raise e
 
 
 # Singleton instance
