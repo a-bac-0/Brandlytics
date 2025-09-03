@@ -69,15 +69,52 @@ class HuggingFaceModelService:
                     token=settings.HF_TOKEN
                 )
                 logger.info(f"Downloaded {filename} from {repo_id}")
+                return model_path
             else:
-                model_path = snapshot_download(
+                # Try to find and download common YOLO model filenames
+                possible_files = ["best.pt", "model.pt", "yolo.pt", "weights.pt", "last.pt"]
+                
+                for candidate_file in possible_files:
+                    try:
+                        model_path = hf_hub_download(
+                            repo_id=repo_id,
+                            filename=candidate_file,
+                            cache_dir=self.cache_dir,
+                            token=settings.HF_TOKEN
+                        )
+                        logger.info(f"Downloaded {candidate_file} from {repo_id}")
+                        return model_path
+                    except HfHubHTTPError as e:
+                        # If it's a 404, the file doesn't exist, try next one
+                        if "404" in str(e):
+                            continue
+                        else:
+                            logger.error(f"HTTP error downloading {candidate_file}: {e}")
+                            continue
+                    except Exception as e:
+                        logger.warning(f"Failed to download {candidate_file}: {e}")
+                        continue
+                
+                # If individual files fail, download entire repo and find .pt files
+                logger.info(f"Trying to download entire repository: {repo_id}")
+                repo_path = snapshot_download(
                     repo_id=repo_id,
                     cache_dir=self.cache_dir,
                     token=settings.HF_TOKEN
                 )
                 logger.info(f"Downloaded complete repository from {repo_id}")
                 
-            return model_path
+                # Look for .pt files in the downloaded repo
+                repo_path_obj = Path(repo_path)
+                pt_files = list(repo_path_obj.rglob("*.pt"))
+                
+                if pt_files:
+                    model_path = str(pt_files[0])  # Use first .pt file found
+                    logger.info(f"Using model file: {model_path}")
+                    return model_path
+                else:
+                    logger.error(f"No .pt files found in {repo_id}")
+                    return None
             
         except HfHubHTTPError as e:
             logger.error(f"HTTP error downloading model {repo_id}: {e}")

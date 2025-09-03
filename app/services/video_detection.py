@@ -27,14 +27,17 @@ logger = get_logger(__name__)
 
 try:
     import yt_dlp
-except ImportError:
+    logger.info(f"✓ yt-dlp successfully imported")
+except ImportError as e:
     yt_dlp = None
+    logger.warning(f"✗ yt-dlp not available: {e}")
 
 
 class VideoDetectionService:
     """
     Service for video brand detection.
     Implements Singleton pattern and reuses ImageDetectionService for consistency.
+    Updated with yt-dlp support.
     """
     
     _instance = None

@@ -13,6 +13,7 @@ class Settings:
     HF_ORG: str = os.getenv("HF_ORG", "CV-Brandlytics")
     HF_MODEL_REPO: str = os.getenv("HF_MODEL_REPO", "CV-Brandlytics/ModelM")
     USE_HF_MODEL: bool = os.getenv("USE_HF_MODEL", "false").lower() == "true"
+    INCLUDE_LOCAL_MODEL: bool = os.getenv("INCLUDE_LOCAL_MODEL", "true").lower() == "true"
     HF_CACHE_DIR: str = os.getenv("HF_CACHE_DIR", "models/hf_cache")
 
     # Configuración de Supabase
@@ -21,8 +22,8 @@ class Settings:
     BUCKET_CROPS: str = os.getenv("BUCKET_CROPS", "crops")
     
     # Configuración de Video Processing
-    VIDEO_FPS_SAMPLE: int = int(os.getenv("VIDEO_FPS_SAMPLE", "1"))
-    VIDEO_MAX_FRAMES: int = int(os.getenv("VIDEO_MAX_FRAMES", "0"))  # 0 = no limit
+    VIDEO_FPS_SAMPLE: int = int(os.getenv("VIDEO_FPS_SAMPLE", "3"))  # Process every 3rd frame (faster)
+    VIDEO_MAX_FRAMES: int = int(os.getenv("VIDEO_MAX_FRAMES", "1800"))  # Limit to ~1 minute at 30fps
     VIDEO_UPLOAD_DIR: str = os.getenv("VIDEO_UPLOAD_DIR", "data/raw/videos/input")
     VIDEO_OUTPUT_DIR: str = os.getenv("VIDEO_OUTPUT_DIR", "data/raw/videos/output")
     

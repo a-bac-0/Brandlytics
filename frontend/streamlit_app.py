@@ -75,12 +75,12 @@ def detect_brands_in_video(video_file, save_to_db=True, frame_step=30):
         files = {"video_file": video_file}
         data = {"save_to_db": str(save_to_db), "frame_step": str(frame_step)}
         
-        with st.spinner("Procesando video... Esto puede tomar un tiempo..."):
+        with st.spinner("Procesando video... Esto puede tomar varios minutos dependiendo de la duración del video..."):
             response = requests.post(
                 url, 
                 files=files, 
                 data=data,
-                timeout=300  # 5 minute timeout
+                timeout=600  # 10 minute timeout
             )
         
         if response.status_code == 200:
@@ -140,11 +140,11 @@ def detect_brands_in_video_url(video_url, save_to_db=True, frame_step=30):
         url = f"{API_BASE_URL}/api/detection/process-video"
         data = {"video_url": video_url, "save_to_db": str(save_to_db), "frame_step": str(frame_step)}
         
-        with st.spinner("Procesando video desde URL... Esto puede tomar un tiempo..."):
+        with st.spinner("Procesando video desde URL... Esto puede tomar varios minutos dependiendo de la duración del video..."):
             response = requests.post(
                 url, 
                 data=data,
-                timeout=300  # 5 minute timeout
+                timeout=600  # 10 minute timeout
             )
         
         if response.status_code == 200:

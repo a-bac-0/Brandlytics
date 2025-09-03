@@ -29,6 +29,7 @@ sqlalchemy>=2.0.0
 # ================================
 python-dotenv>=1.0.0
 tqdm>=4.66.0
+yt-dlp>=2023.7.6
 
 # ================================
 # FRONTEND & DATA VISUALIZATION

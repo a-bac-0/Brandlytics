@@ -39,8 +39,45 @@ class OptimizedVideoProcessor:
         # Initialize Supabase (using existing connection pattern)
         self.supabase = get_supabase()
         
-        # Initialize YOLO model (using existing settings)
-        self.model = YOLO(settings.MODEL_PATH)
+        # Initialize YOLO models - support multiple HuggingFace models
+        self.models = []  # List to store multiple models
+        self.model_names = []  # Track model names for logging
+        
+        if settings.USE_HF_MODEL:
+            try:
+                from app.services.huggingface_service import HuggingFaceModelService
+                self.hf_service = HuggingFaceModelService()
+                
+                # Load only the specific ModelM from HuggingFace
+                logger.info(f"Loading specific HuggingFace model: {settings.HF_MODEL_REPO}")
+                
+                model_path = self.hf_service.download_model(settings.HF_MODEL_REPO)
+                if model_path:
+                    model = YOLO(model_path)
+                    self.models = [model]  # Single model
+                    self.model_names = [settings.HF_MODEL_REPO]
+                    self.model = model  # Primary model
+                    logger.info(f"Successfully loaded HF model: {settings.HF_MODEL_REPO}")
+                    logger.info(f"Model detects brands: {list(model.names.values())}")
+                else:
+                    logger.error(f"Failed to download model: {settings.HF_MODEL_REPO}")
+                    raise Exception(f"Could not download {settings.HF_MODEL_REPO}")
+                    
+            except Exception as e:
+                logger.error(f"Error loading HF model {settings.HF_MODEL_REPO}: {e}")
+                if settings.INCLUDE_LOCAL_MODEL:
+                    logger.info("Falling back to local model")
+                    self.model = YOLO(settings.MODEL_PATH)
+                    self.models = [self.model]
+                    self.model_names = ["local_model"]
+                else:
+                    raise Exception(f"Failed to load HuggingFace model and local model disabled: {e}")
+        else:
+            # Use local model
+            logger.info(f"Using local model: {settings.MODEL_PATH}")
+            self.model = YOLO(settings.MODEL_PATH)
+            self.models = [self.model]
+            self.model_names = ["local_model"]
         
         # Initialize simple tracking (using ultralytics built-in tracking)
         self.use_tracking = True
@@ -48,6 +85,9 @@ class OptimizedVideoProcessor:
         # Performance tracking
         self.total_detection_time = 0.0
         self.processed_frames = 0
+        
+        # Tracking state for detection events
+        self.active_tracks: Dict[int, Dict] = {}
         
         # Tracking state for detection events
         self.active_tracks: Dict[int, Dict] = {}  # track_id -> track_info
