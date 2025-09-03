@@ -20,6 +20,8 @@ from app.api.schemas.schemas_detection import DetectionCreate
 from app.config.model_config import settings
 from app.database.operations import save_detections
 from app.utils.logger import get_logger
+import time
+
 
 logger = get_logger(__name__)
 
@@ -149,7 +151,8 @@ class VideoDetectionService:
                 'service_version': '1.0.0',
                 'frame_step': frame_step,
                 'conf_threshold': conf,
-                'iou_threshold': iou
+                'iou_threshold': iou,
+                'processing_time_seconds': results.get('processing_time_seconds', 0)
             }
             
             logger.info(f"Video processing completed successfully. Detections: {len(results.get('detections_to_save', []))}")
@@ -184,6 +187,7 @@ class VideoDetectionService:
         Returns:
             Dictionary with processing results
         """
+        processing_start = time.time()
         suffix = Path(filename).suffix or ".mp4"
         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
             tmp.write(video_bytes)
@@ -264,7 +268,14 @@ class VideoDetectionService:
             brand: len(timestamps) * frame_step / fps 
             for brand, timestamps in brand_timestamps.items()
         }
-        
+        brand_confidence = {}
+        for brand_name in brand_counts.keys():
+            brand_detections = [d for d in detections_to_save if d.brand_name == brand_name]
+            confidences = [d.confidence for d in brand_detections]
+            brand_confidence[brand_name] = {
+                "avg": sum(confidences) / len(confidences) if confidences else 0,
+                "max": max(confidences) if confidences else 0
+            }
         # Create summary
         summary = {
             "filename": filename,
@@ -275,13 +286,16 @@ class VideoDetectionService:
             "frames_with_brands": frames_with_brands,
             "brands_found": list(brand_counts.keys()),
             "brand_counts": brand_counts,
-            "brand_screen_time": brand_screen_time
+            "brand_screen_time": brand_screen_time,
+            "brand_confidence": brand_confidence
         }
-        
+        processing_end = time.time()
+        processing_time_seconds = processing_end - processing_start
         return {
             "summary": summary,
             "detections": [d.model_dump() for d in detections_to_save],
-            "detections_to_save": detections_to_save
+            "detections_to_save": detections_to_save,
+            "processing_time_seconds": processing_time_seconds
         }
     
     async def process_video_batch(
