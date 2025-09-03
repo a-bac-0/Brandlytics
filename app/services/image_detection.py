@@ -7,18 +7,53 @@ from ultralytics import YOLO
 from app.config.model_config import settings
 from app.api.schemas.schemas_detection import DetectionCreate
 from app.utils.image_processing import crop_and_upload_detection
+from app.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 class ImageDetectionService:
     model: YOLO = None
 
     def __init__(self):
-        model_path = settings.MODEL_PATH
         if self.model is None:
-            print(f"Cargando modelo desde: {model_path}")
+            self._load_model()
+
+    def _load_model(self):
+        """Load model based on configuration - HuggingFace or local."""
+        if settings.USE_HF_MODEL:
             try:
-                self.__class__.model = YOLO(model_path)
+                from app.services.huggingface_service import HuggingFaceModelService
+                logger.info(f"Loading HuggingFace model: {settings.HF_MODEL_REPO}")
+                
+                hf_service = HuggingFaceModelService()
+                model_path = hf_service.download_model(settings.HF_MODEL_REPO)
+                
+                if model_path:
+                    self.__class__.model = YOLO(model_path)
+                    logger.info(f"✓ HuggingFace model loaded: {settings.HF_MODEL_REPO}")
+                    logger.info(f"Model detects brands: {list(self.model.names.values())}")
+                else:
+                    raise Exception(f"Could not download {settings.HF_MODEL_REPO}")
+                    
             except Exception as e:
-                raise RuntimeError(f"Error al cargar el modelo")
+                logger.error(f"✗ Failed to load HF model {settings.HF_MODEL_REPO}: {e}")
+                if settings.INCLUDE_LOCAL_MODEL:
+                    logger.info("Falling back to local model")
+                    self._load_local_model()
+                else:
+                    raise Exception(f"Failed to load HuggingFace model and local model disabled: {e}")
+        else:
+            self._load_local_model()
+
+    def _load_local_model(self):
+        """Load local YOLO model."""
+        model_path = settings.MODEL_PATH
+        logger.info(f"Loading local model from: {model_path}")
+        try:
+            self.__class__.model = YOLO(model_path)
+            logger.info("✓ Local model loaded successfully")
+        except Exception as e:
+            raise RuntimeError(f"Error loading local model from {model_path}: {e}")
 
 
     #Cargamos la imagen desde una url, local o un archivo subido:        
