@@ -4,46 +4,47 @@
 # ================================
 # CORE MACHINE LEARNING & CV
 # ================================
-torch>=2.0.0
-ultralytics>=8.0.0
-opencv-python>=4.8.0
-numpy>=1.24.0
-pillow>=10.0.0
+torch
+ultralytics
+opencv-python
+numpy
+pillow
 
 # ================================
 # WEB FRAMEWORK & API
 # ================================
-fastapi>=0.104.0
-uvicorn[standard]>=0.24.0
-pydantic>=2.4.0
-python-multipart>=0.0.6
+fastapi
+uvicorn[standard]
+pydantic
+python-multipart
 
 # ================================
 # DATABASE & STORAGE
 # ================================
-supabase>=1.0.0
-sqlalchemy>=2.0.0
+supabase
+sqlalchemy
 
 # ================================
 # CONFIGURATION & UTILITIES
 # ================================
-python-dotenv>=1.0.0
-tqdm>=4.66.0
-yt-dlp>=2023.7.6
+python-dotenv
+tqdm
+yt-dlp
 
 # ================================
 # FRONTEND & DATA VISUALIZATION
 # ================================
-streamlit>=1.28.0
-pandas>=2.1.0
-matplotlib>=3.7.0
-seaborn>=0.12.0
+streamlit
+pandas
+matplotlib
+seaborn
+plotly
 
 # ================================
 # HUGGING FACE INTEGRATION
 # ================================
-huggingface_hub>=0.17.0
-transformers>=4.34.0
+huggingface_hub
+transformers
 
 # ================================
 # DEVELOPMENT TOOLS (Optional)
