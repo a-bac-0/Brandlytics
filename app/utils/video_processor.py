@@ -39,8 +39,45 @@ class OptimizedVideoProcessor:
         # Initialize Supabase (using existing connection pattern)
         self.supabase = get_supabase()
         
-        # Initialize YOLO model (using existing settings)
-        self.model = YOLO(settings.MODEL_PATH)
+        # Initialize YOLO models - support multiple HuggingFace models
+        self.models = []  # List to store multiple models
+        self.model_names = []  # Track model names for logging
+        
+        if settings.USE_HF_MODEL:
+            try:
+                from app.services.huggingface_service import HuggingFaceModelService
+                self.hf_service = HuggingFaceModelService()
+                
+                # Load only the specific ModelM from HuggingFace
+                logger.info(f"Loading specific HuggingFace model: {settings.HF_MODEL_REPO}")
+                
+                model_path = self.hf_service.download_model(settings.HF_MODEL_REPO)
+                if model_path:
+                    model = YOLO(model_path)
+                    self.models = [model]  # Single model
+                    self.model_names = [settings.HF_MODEL_REPO]
+                    self.model = model  # Primary model
+                    logger.info(f"Successfully loaded HF model: {settings.HF_MODEL_REPO}")
+                    logger.info(f"Model detects brands: {list(model.names.values())}")
+                else:
+                    logger.error(f"Failed to download model: {settings.HF_MODEL_REPO}")
+                    raise Exception(f"Could not download {settings.HF_MODEL_REPO}")
+                    
+            except Exception as e:
+                logger.error(f"Error loading HF model {settings.HF_MODEL_REPO}: {e}")
+                if settings.INCLUDE_LOCAL_MODEL:
+                    logger.info("Falling back to local model")
+                    self.model = YOLO(settings.MODEL_PATH)
+                    self.models = [self.model]
+                    self.model_names = ["local_model"]
+                else:
+                    raise Exception(f"Failed to load HuggingFace model and local model disabled: {e}")
+        else:
+            # Use local model
+            logger.info(f"Using local model: {settings.MODEL_PATH}")
+            self.model = YOLO(settings.MODEL_PATH)
+            self.models = [self.model]
+            self.model_names = ["local_model"]
         
         # Initialize simple tracking (using ultralytics built-in tracking)
         self.use_tracking = True
@@ -54,25 +91,108 @@ class OptimizedVideoProcessor:
 
     def detect_brands(self, frame: np.ndarray) -> List[Dict]:
         """
-        Detect brands in a single frame using YOLO.
-        Compatible with the original VideoProcessor interface.
+        Detect brands in a single frame using the HuggingFace ModelM.
+        Optimized for single model detection.
         """
         start_time = time.perf_counter()
         
-        results = self.model(frame)[0]
-        detections = []
+        all_detections = []
         
-        for box, conf, cls in zip(results.boxes.xyxy, results.boxes.conf, results.boxes.cls):
-            x1, y1, x2, y2 = map(int, box.tolist())
-            detections.append({
-                'brand_name': self.model.names[int(cls)],
-                'confidence': float(conf),
-                'bbox': (x1, y1, x2, y2),
-                'class_id': int(cls)
-            })
+        # Run detection on the single HuggingFace model
+        try:
+            results = self.model(frame)[0]
+            model_name = self.model_names[0]
+            
+            for box, conf, cls in zip(results.boxes.xyxy, results.boxes.conf, results.boxes.cls):
+                x1, y1, x2, y2 = map(int, box.tolist())
+                detection = {
+                    'brand_name': self.model.names[int(cls)],
+                    'confidence': float(conf),
+                    'bbox': (x1, y1, x2, y2),
+                    'class_id': int(cls),
+                    'model_source': model_name,
+                    'model_index': 0
+                }
+                all_detections.append(detection)
+        except Exception as e:
+            logger.error(f"Error running model {self.model_names[0]}: {e}")
+            return []
         
         self.total_detection_time += (time.perf_counter() - start_time)
-        return detections
+        return all_detections  # No need to filter duplicates since we only have one model
+    
+    def _filter_duplicate_detections(self, detections: List[Dict], overlap_threshold: float = 0.5) -> List[Dict]:
+        """
+        Filter out duplicate detections from different models.
+        Keep the detection with highest confidence for overlapping boxes of the same brand.
+        """
+        if not detections:
+            return []
+        
+        # Group detections by brand name
+        brand_groups = {}
+        for det in detections:
+            brand = det['brand_name']
+            if brand not in brand_groups:
+                brand_groups[brand] = []
+            brand_groups[brand].append(det)
+        
+        filtered = []
+        
+        for brand, brand_detections in brand_groups.items():
+            # Sort by confidence (highest first)
+            brand_detections.sort(key=lambda x: x['confidence'], reverse=True)
+            
+            # Keep track of which detections to include
+            keep_indices = []
+            
+            for i, det1 in enumerate(brand_detections):
+                # Check if this detection overlaps significantly with any already kept detection
+                overlaps_with_kept = False
+                
+                for kept_idx in keep_indices:
+                    kept_det = brand_detections[kept_idx]
+                    overlap = self._calculate_bbox_overlap(det1['bbox'], kept_det['bbox'])
+                    
+                    if overlap > overlap_threshold:
+                        overlaps_with_kept = True
+                        break
+                
+                # If it doesn't overlap significantly, keep it
+                if not overlaps_with_kept:
+                    keep_indices.append(i)
+            
+            # Add kept detections to final list
+            for idx in keep_indices:
+                filtered.append(brand_detections[idx])
+        
+        return filtered
+    
+    def _calculate_bbox_overlap(self, bbox1: Tuple[int, int, int, int], bbox2: Tuple[int, int, int, int]) -> float:
+        """Calculate the overlap ratio between two bounding boxes."""
+        x1_1, y1_1, x2_1, y2_1 = bbox1
+        x1_2, y1_2, x2_2, y2_2 = bbox2
+        
+        # Calculate intersection
+        x1_i = max(x1_1, x1_2)
+        y1_i = max(y1_1, y1_2)
+        x2_i = min(x2_1, x2_2)
+        y2_i = min(y2_1, y2_2)
+        
+        if x2_i <= x1_i or y2_i <= y1_i:
+            return 0.0  # No intersection
+        
+        intersection_area = (x2_i - x1_i) * (y2_i - y1_i)
+        
+        # Calculate union
+        area1 = (x2_1 - x1_1) * (y2_1 - y1_1)
+        area2 = (x2_2 - x1_2) * (y2_2 - y1_2)
+        union_area = area1 + area2 - intersection_area
+        
+        if union_area <= 0:
+            return 0.0
+        
+        return intersection_area / union_area
 
     def annotate_image(self, frame: np.ndarray, detections: List[Dict]) -> np.ndarray:
         """

@@ -13,6 +13,7 @@ class Settings:
     HF_ORG: str = os.getenv("HF_ORG", "CV-Brandlytics")
     HF_MODEL_REPO: str = os.getenv("HF_MODEL_REPO", "CV-Brandlytics/ModelM")
     USE_HF_MODEL: bool = os.getenv("USE_HF_MODEL", "false").lower() == "true"
+    INCLUDE_LOCAL_MODEL: bool = os.getenv("INCLUDE_LOCAL_MODEL", "true").lower() == "true"
     HF_CACHE_DIR: str = os.getenv("HF_CACHE_DIR", "models/hf_cache")
 
     # Configuración de Supabase
