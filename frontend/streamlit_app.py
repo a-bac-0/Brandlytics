@@ -22,7 +22,7 @@ st.set_page_config(
 )
 
 # API Configuration
-API_BASE_URL = "http://localhost:8000"
+API_BASE_URL = "http://api:8000"
 
 def check_api_status():
     """Check if API is running"""
