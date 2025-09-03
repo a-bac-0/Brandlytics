@@ -12,8 +12,22 @@ class ImageDetectionService:
     model: YOLO = None
 
     def __init__(self):
-        model_path = settings.MODEL_PATH
         if self.model is None:
+            try:
+                if hasattr(settings, 'USE_HF_MODEL') and settings.USE_HF_MODEL:
+                    print(f"Intentando cargar modelo de Hugging Face: {settings.HF_MODEL_REPO}")
+                    from app.services.huggingface_service import get_hf_model_service
+                    hf_service = get_hf_model_service()
+                    self.__class__.model = hf_service.load_yolo_from_hf(
+                        repo_id=settings.HF_MODEL_REPO,
+                        model_filename="best.pt"
+                    )
+                    print(f"✓ Modelo de HuggingFace cargado correctamente")
+                    return
+            except Exception as e:
+                print(f"Error al cargar modelo de HF: {e}. Usando modelo local.")
+            
+            model_path = settings.MODEL_PATH
             print(f"Cargando modelo desde: {model_path}")
             try:
                 self.__class__.model = YOLO(model_path)
