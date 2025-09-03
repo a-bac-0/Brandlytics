@@ -30,7 +30,7 @@ if 'processing' not in st.session_state:
     st.session_state.processing = False
 
 # API Configuration
-API_BASE_URL = "http://api:8000"
+API_BASE_URL = "http://localhost:8000"
 
 @st.cache_data(ttl=30)  # Cache for 30 seconds
 def check_api_status():
