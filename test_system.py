@@ -10,7 +10,6 @@ from pathlib import Path
 # Add app to path
 sys.path.append(str(Path(__file__).parent))
 
-from app.services.video_analysis import VideoAnalysisService
 from app.config.video_analysis_config import VideoAnalysisConfig, load_preset_config
 
 
