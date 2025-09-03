@@ -30,7 +30,7 @@ if 'processing' not in st.session_state:
     st.session_state.processing = False
 
 # API Configuration
-API_BASE_URL = "http://localhost:8000"
+API_BASE_URL = "http://api:8000"
 
 @st.cache_data(ttl=30)  # Cache for 30 seconds
 def check_api_status():
@@ -102,6 +102,21 @@ def detect_brands_in_video(video_file, save_to_db=True):
         st.error(f"Error processing video: {e}")
         return None
 
+def get_video_analysis(video_name):
+    """Get detailed video analysis from the API"""
+    try:
+        url = f"{API_BASE_URL}/api/analytics/analysis/{video_name}"
+        response = requests.get(url)
+        
+        if response.status_code == 200:
+            return response.json()
+        else:
+            st.error(f"API Error: {response.status_code} - {response.text}")
+            return None
+    except Exception as e:
+        st.error(f"Error processing video: {e}")
+        return None
+
 def detect_brands_in_video_url(video_url, video_name=None, save_to_db=True):
     """Send video URL to API for brand detection"""
     if not video_url or not video_url.strip():
@@ -139,13 +154,36 @@ def detect_brands_in_video_url(video_url, video_name=None, save_to_db=True):
             )
         
         if response.status_code == 200:
-            st.success("✅ Video processed successfully!")
-            return response.json()
-        elif response.status_code == 503:
-            st.error("🚫 URL processing is temporarily unavailable. Please try uploading the video file directly.")
-            return None
+            api_response = response.json()
+            result = {
+                'video_info': {
+                    'duration': api_response.get('summary', {}).get('duration_seconds', 0)
+                },
+                'processing_stats': {
+                    'total_frames_processed': api_response.get('summary', {}).get('total_frames', 0),
+                    'processing_time': api_response.get('metadata', {}).get('processing_time_seconds', 0),
+                    'avg_time_per_frame': (api_response.get('metadata', {}).get('processing_time_seconds', 0) / 
+                      api_response.get('summary', {}).get('total_frames', 1))
+                },
+                'brand_analysis': {}
+            }
+            # Convertir análisis al formato esperado
+            for brand_data in api_response.get('summary', {}).get('brands_found', []):
+                brand_name = brand_data
+                brand_counts = api_response.get('summary', {}).get('brand_counts', {})
+                brand_screen_time = api_response.get('summary', {}).get('brand_screen_time', {})
+                
+                result['brand_analysis'][brand_name] = {
+                    'total_appearances': brand_counts.get(brand_name, 0),
+                    'total_time_seconds': brand_screen_time.get(brand_name, 0),
+                    'appearance_percentage': (brand_screen_time.get(brand_name, 0) / result['video_info']['duration']) * 100 if result['video_info']['duration'] > 0 else 0,
+                    'average_confidence': api_response.get('summary', {}).get('brand_confidence', {}).get(brand_name, {}).get('avg', 0.7),
+                    'max_confidence': api_response.get('summary', {}).get('brand_confidence', {}).get(brand_name, {}).get('max', 0.9)
+                }
+            
+            return result
         else:
-            st.error(f"❌ API Error: {response.status_code} - {response.text}")
+            st.error(f"API Error: {response.status_code} - {response.text}")
             return None
             
     except requests.Timeout:
@@ -199,7 +237,7 @@ def create_brand_analysis_charts(brand_analysis, video_duration):
     appearances = [brand_analysis[brand]["total_appearances"] for brand in brands]
     percentages = [brand_analysis[brand]["appearance_percentage"] for brand in brands]
     confidences = [brand_analysis[brand]["average_confidence"] for brand in brands]
-    
+    times = [brand_analysis[brand]["total_time_seconds"] for brand in brands]
     # Create subplot with secondary y-axis
     fig = make_subplots(
         rows=2, cols=2,
@@ -216,8 +254,21 @@ def create_brand_analysis_charts(brand_analysis, video_duration):
     )
     
     # Pie chart of screen time percentages
+    total_brand_time_percentage = sum(percentages)
+    if total_brand_time_percentage < 100:
+        pie_labels = brands + ["Sin marcas"]
+        pie_values = percentages + [100 - total_brand_time_percentage]
+    else:
+        pie_labels = brands
+        pie_values = percentages
+        
     fig.add_trace(
-        go.Pie(labels=brands, values=percentages, name="Screen Time %"),
+        go.Pie(
+            labels=pie_labels, 
+            values=pie_values, 
+            name="Screen Time %",
+            hovertemplate="%{label}<br>%{value:.1f}% del video<extra></extra>"
+        ),
         row=1, col=2
     )
     
@@ -641,6 +692,7 @@ def main():
                         st.write(f"**📁 Tamaño:** {file_size:.2f} MB")
                         st.write(f"**📝 Nombre:** {uploaded_video.name}")
                         
+<<<<<<< HEAD
                         # Checkbox para guardar en BD
                         save_to_db = st.checkbox("💾 Guardar análisis en base de datos", value=True, key="save_video_file")
                         
@@ -656,6 +708,36 @@ def main():
                             uploaded_video.seek(0)
                             with st.spinner("🔄 Procesando video... Esto puede tomar un tiempo..."):
                                 results = detect_brands_in_video(uploaded_video, save_to_db)
+=======
+
+                    st.markdown("#### ⚙️ Opciones de Procesamiento")
+                col_a, col_b = st.columns(2)
+                with col_a:
+                    save_to_db = st.checkbox("💾 Guardar análisis en BD", value=True)
+                with col_b:
+                    processing_intensity = st.radio(
+                        "Intensidad de análisis:", 
+                        ["Básica (2 fps)", "Estándar (4 fps)", "Profesional (8 fps)"],
+                        index=1,
+                        horizontal=True,
+                        help="Básica: 2 frames/seg, Estándar: 4 frames/seg, Profesional: 8 frames/seg. Mayor fps = análisis más detallado pero más lento"
+                    )
+                    
+                    # Convertir selección a valor frame_step
+                    frame_step = 15 if processing_intensity == "Básica (2 fps)" else 8 if processing_intensity == "Estándar (4 fps)" else 3
+                analyze_button = st.button(
+                    "🎬 Analizar Video", 
+                    key="analyze_video_file",
+                    type="primary",
+                    use_container_width=True
+                )
+                
+                if analyze_button:
+                    uploaded_video.seek(0)
+                    with st.spinner("🔄 Procesando video... Esto puede tomar un tiempo..."):
+                        # Usar frame_step en la función
+                        results = detect_brands_in_video(uploaded_video, save_to_db, frame_step)
+>>>>>>> b8e15fedfeea0ac5f438690651c30cab5b0bb594
                 
                 with col2:
                     st.markdown("#### 🎯 Resultados del Análisis")
@@ -741,7 +823,25 @@ def main():
                             st.markdown('</div>', unsafe_allow_html=True)
                             
                             # Checkbox para guardar en BD
+<<<<<<< HEAD
                             save_to_db = st.checkbox("💾 Guardar análisis en base de datos", value=True, key="save_video_url")
+=======
+                            st.markdown("#### ⚙️ Opciones de Procesamiento")
+                            col_a, col_b = st.columns(2)
+                            with col_a:
+                                save_to_db = st.checkbox("💾 Guardar análisis en BD", value=True, key="save_video_url_db")
+                            with col_b:
+                                processing_intensity = st.radio(
+                                    "Intensidad de análisis:", 
+                                    ["Básica (2 fps)", "Estándar (4 fps)", "Profesional (8 fps)"],
+                                    index=1,
+                                    horizontal=True,
+                                    help="Básica: 2 frames/seg, Estándar: 4 frames/seg, Profesional: 8 frames/seg. Mayor fps = análisis más detallado pero más lento"
+                                )
+
+                                frame_step = 15 if processing_intensity == "Básica (2 fps)" else 8 if processing_intensity == "Estándar (4 fps)" else 3
+
+>>>>>>> b8e15fedfeea0ac5f438690651c30cab5b0bb594
                             
                             # Botón de análisis
                             analyze_button = st.button(
@@ -828,38 +928,88 @@ def main():
             st.markdown('<div class="detection-container">', unsafe_allow_html=True)
             
             # Estadísticas de procesamiento
-            st.markdown("#### 📈 Estadísticas de Procesamiento")
+            st.markdown("#### 📈 Estadísticas del vídeo")
             stat_col1, stat_col2, stat_col3, stat_col4 = st.columns(4)
             
             with stat_col1:
                 st.metric(
-                    "⏱️ Duración", 
+                    "⏱️ Duración total", 
                     f"{results['video_info']['duration']:.1f}s",
-                    help="Duración total del video"
+                    help="Duración total del video analizado"
                 )
             with stat_col2:
                 st.metric(
-                    "🎞️ Frames Procesados", 
+                    "🎞️ Fotogramas Analizados",
                     results['processing_stats']['total_frames_processed'],
-                    help="Número de frames analizados"
+                    help="Cantidad de fotogramas (frames) que fueron procesados por el sistema de detección"
                 )
             with stat_col3:
+                processing_time = results['processing_stats']['processing_time']
+                if processing_time <= 0 and results['processing_stats']['total_frames_processed'] > 0:
+                    processing_time = results['processing_stats']['total_frames_processed'] * 0.1  # Estimación
                 st.metric(
-                    "⏱️ Tiempo de Procesamiento", 
-                    f"{results['processing_stats']['processing_time']:.1f}s",
-                    help="Tiempo total de procesamiento"
+                    "⏱️ Tiempo de Análisis", 
+                    f"{processing_time:.1f}s",
+                    help="Tiempo total que tomó el sistema en analizar el video completo"
                 )
             with stat_col4:
+                avg_time = processing_time / results['processing_stats']['total_frames_processed'] if results['processing_stats']['total_frames_processed'] > 0 else 0
                 st.metric(
-                    "⚡ Velocidad", 
-                    f"{results['processing_stats']['avg_time_per_frame']:.3f}s/frame",
-                    help="Tiempo promedio por frame"
+                    "⚡ Velocidad de Procesamiento", 
+                    f"{avg_time:.3f}s/frame",
+                    help="Tiempo promedio dedicado a procesar cada fotograma individual"
                 )
             
             # Análisis de marcas
             if results['brand_analysis']:
                 st.markdown("#### 🏷️ Resultados de Detección de Marcas")
                 
+<<<<<<< HEAD
+=======
+                # Agregar tarjetas de resumen de marcas
+                st.markdown("##### 🏷️ Resumen de Marcas")
+                
+                # Crear una fila de tarjetas para cada marca
+                brand_cols = st.columns(min(3, len(results['brand_analysis'])))
+                
+                for idx, (brand_name, analysis) in enumerate(results['brand_analysis'].items()):
+                    col_idx = idx % len(brand_cols)
+                    with brand_cols[col_idx]:
+                        st.markdown(f"""
+                        <div style="padding: 10px; border-radius: 5px; border: 1px solid #ddd; background-color: white;">
+                            <h5 style="margin:0; color:#1E88E5;"><img src="https://img.icons8.com/color/24/000000/price-tag.png"/> {brand_name.title()}</h5>
+                            <p style="font-size:12px; margin:5px 0;">
+                                <span style="font-weight: bold;">Total Detecciones:</span> {analysis['total_appearances']}<br>
+                                <span style="font-weight: bold;">Tiempo en Pantalla:</span> {analysis['total_time_seconds']:.1f}s<br>
+                                <span style="font-weight: bold;">Cobertura del Video:</span> {analysis['appearance_percentage']:.1f}%
+                            </p>
+                        </div>
+                        """, unsafe_allow_html=True)
+                if len(results['brand_analysis']) > 0:
+                    st.markdown("##### ⏱️ Línea Temporal de Aparición")
+    
+                    # Determinar la duración total
+                    duration = results['video_info']['duration']
+                    
+                    # Crear una visualización de timeline para cada marca
+                    for brand_name, analysis in results['brand_analysis'].items():
+                        # Estimar timestamps basados en apariciones y duración
+                        percentage = analysis['appearance_percentage'] / 100
+                        timeline_width = 300  # píxeles
+                        
+                        st.markdown(f"""
+                        <div style="margin-bottom: 10px;">
+                            <p style="margin-bottom: 5px;"><strong>{brand_name.title()}</strong> 
+                            <span style="font-size:0.9em; color:#666;">(Visible durante {analysis['total_time_seconds']:.1f}s - {analysis['appearance_percentage']:.1f}% del video)</span></p>
+                            <div style="height: 20px; width: {timeline_width}px; background-color: #f0f0f0; border-radius: 3px; position: relative;">
+                                <div style="position: absolute; height: 20px; width: {percentage * timeline_width}px; background-color: #4CAF50; border-radius: 3px;"></div>
+                                <div style="position: absolute; width: 100%; text-align: center; line-height: 20px; color: black; font-size: 12px;">
+                                    {analysis['appearance_percentage']:.1f}% del video
+                                </div>
+                            </div>
+                        </div>
+                        """, unsafe_allow_html=True)
+>>>>>>> b8e15fedfeea0ac5f438690651c30cab5b0bb594
                 # Crear visualizaciones
                 fig, df = create_brand_analysis_charts(
                     results['brand_analysis'], 
@@ -881,17 +1031,37 @@ def main():
                         
                         with detail_col_a:
                             st.markdown("**📊 Estadísticas Básicas**")
-                            st.metric("Apariciones Totales", analysis['total_appearances'])
-                            st.metric("Tiempo en Pantalla", f"{analysis['total_time_seconds']:.1f}s")
+                            st.metric(
+                                "Detecciones Totales", 
+                                analysis['total_appearances'],
+                                help="Número total de veces que la marca fue detectada en distintos fotogramas"
+                            )
+                            st.metric(
+                                "Tiempo Total Visible", 
+                                f"{analysis['total_time_seconds']:.1f}s",
+                                help="Tiempo acumulado en segundos donde la marca es visible en el video"
+                            )
                         
                         with detail_col_b:
                             st.markdown("**🎯 Métricas de Confianza**")
-                            st.metric("Confianza Promedio", f"{analysis['average_confidence']:.2f}")
-                            st.metric("Confianza Máxima", f"{analysis['max_confidence']:.2f}")
+                            st.metric(
+                                "Precisión Promedio", 
+                                f"{analysis['average_confidence']:.2f}",
+                                help="Nivel promedio de certeza con la que el algoritmo identificó esta marca (0-1)"
+                            )
+                            st.metric(
+                                "Precisión Máxima", 
+                                f"{analysis['max_confidence']:.2f}",
+                                help="Nivel máximo de certeza alcanzado en una detección de esta marca (0-1)"
+                            )
                         
                         with detail_col_c:
-                            st.markdown("**📈 Porcentajes**")
-                            st.metric("% Tiempo en Pantalla", f"{analysis['appearance_percentage']:.1f}%")
+                            st.markdown("**📈 Visibilidad**")
+                            st.metric(
+                                "Cobertura del Video", 
+                                f"{analysis['appearance_percentage']:.1f}%",
+                                help="Porcentaje del tiempo total del video en que la marca aparece visible"
+                            )
                             # Barra de progreso para tiempo en pantalla
                             st.progress(analysis['appearance_percentage'] / 100)
                         
