@@ -90,11 +90,11 @@ def detect_brands_in_video(video_file, save_to_db=True, frame_step=30):
                     'duration': api_response.get('summary', {}).get('duration_seconds', 0)
                 },
                 'processing_stats': {
-                    'total_frames_processed': api_response.get('summary', {}).get('total_frames', 0),
-                    'processing_time': api_response.get('metadata', {}).get('processing_time_seconds', 0),
-                    'avg_time_per_frame': (api_response.get('metadata', {}).get('processing_time_seconds', 0) / 
-                      api_response.get('summary', {}).get('total_frames', 1))
-                },
+                'total_frames_processed': api_response.get('summary', {}).get('processed_frames', 0),  
+                'processing_time': api_response.get('metadata', {}).get('processing_time_seconds', 0),
+                'avg_time_per_frame': (api_response.get('metadata', {}).get('processing_time_seconds', 0) / 
+                api_response.get('summary', {}).get('processed_frames', 1))  
+            },
                 'brand_analysis': {}
             }
             # Convertir análisis al formato esperado
