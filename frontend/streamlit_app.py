@@ -21,25 +21,37 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# Initialize session state variables
+if 'api_status' not in st.session_state:
+    st.session_state.api_status = False
+if 'last_url' not in st.session_state:
+    st.session_state.last_url = ""
+if 'processing' not in st.session_state:
+    st.session_state.processing = False
+
 # API Configuration
 API_BASE_URL = "http://localhost:8000"
 
+@st.cache_data(ttl=30)  # Cache for 30 seconds
 def check_api_status():
     """Check if API is running"""
     try:
-        response = requests.get(f"{API_BASE_URL}/")
+        response = requests.get(f"{API_BASE_URL}/", timeout=5)
         return response.status_code == 200, response.json()
-    except:
+    except Exception as e:
+        st.error(f"API connection error: {str(e)}")
         return False, None
 
+@st.cache_data(ttl=300)  # Cache for 5 minutes
 def get_supported_brands():
     """Get list of supported brands"""
     try:
-        response = requests.get(f"{API_BASE_URL}/brands")
+        response = requests.get(f"{API_BASE_URL}/brands", timeout=5)
         if response.status_code == 200:
             return response.json()["brands"]
         return []
-    except:
+    except Exception as e:
+        st.warning(f"Could not fetch supported brands: {str(e)}")
         return []
 
 def detect_brands_in_image(image_file=None, image_url=None):
@@ -67,62 +79,19 @@ def detect_brands_in_image(image_file=None, image_url=None):
         st.error(f"Error detecting brands: {e}")
         return None
 
-def detect_brands_in_video(video_file, save_to_db=True, frame_step=30):
+def detect_brands_in_video(video_file, save_to_db=True):
     """Send video to API for brand detection"""
     try:
-        url = f"{API_BASE_URL}/api/detection/process-video"
+        files = {"file": video_file}
+        data = {"save_to_db": save_to_db}
         
-        files = {"video_file": video_file}
-        data = {"save_to_db": str(save_to_db), "frame_step": str(frame_step)}
-        
-        with st.spinner("Procesando video... Esto puede tomar un tiempo..."):
+        with st.spinner("Processing video... This may take a while."):
             response = requests.post(
-                url, 
+                f"{API_BASE_URL}/api/video/upload", 
                 files=files, 
                 data=data,
                 timeout=300  # 5 minute timeout
             )
-        
-        if response.status_code == 200:
-            api_response = response.json()
-            result = {
-                'video_info': {
-                    'duration': api_response.get('summary', {}).get('duration_seconds', 0)
-                },
-                'processing_stats': {
-                    'total_frames_processed': api_response.get('summary', {}).get('total_frames', 0),
-                    'processing_time': api_response.get('metadata', {}).get('processing_time_seconds', 0),
-                    'avg_time_per_frame': 0.1  
-                },
-                'brand_analysis': {}
-            }
-            # Convertir análisis al formato esperado
-            for brand_data in api_response.get('summary', {}).get('brands_found', []):
-                brand_name = brand_data
-                brand_counts = api_response.get('summary', {}).get('brand_counts', {})
-                brand_screen_time = api_response.get('summary', {}).get('brand_screen_time', {})
-                
-                result['brand_analysis'][brand_name] = {
-                    'total_appearances': brand_counts.get(brand_name, 0),
-                    'total_time_seconds': brand_screen_time.get(brand_name, 0),
-                    'appearance_percentage': (brand_screen_time.get(brand_name, 0) / result['video_info']['duration']) * 100 if result['video_info']['duration'] > 0 else 0,
-                    'average_confidence': 0.7, 
-                    'max_confidence': 0.9  
-                }
-            
-            return result
-        else:
-            st.error(f"API Error: {response.status_code} - {response.text}")
-            return None
-    except Exception as e:
-        st.error(f"Error processing video: {e}")
-        return None
-
-def get_video_analysis(video_name):
-    """Get detailed video analysis from the API"""
-    try:
-        url = f"{API_BASE_URL}/api/analytics/analysis/{video_name}"
-        response = requests.get(url)
         
         if response.status_code == 200:
             return response.json()
@@ -130,57 +99,67 @@ def get_video_analysis(video_name):
             st.error(f"API Error: {response.status_code} - {response.text}")
             return None
     except Exception as e:
-        st.error(f"Error getting video analysis: {e}")
+        st.error(f"Error processing video: {e}")
         return None
 
-def detect_brands_in_video_url(video_url, save_to_db=True, frame_step=30):
+def detect_brands_in_video_url(video_url, video_name=None, save_to_db=True):
     """Send video URL to API for brand detection"""
-    try:
-        url = f"{API_BASE_URL}/api/detection/process-video"
-        data = {"video_url": video_url, "save_to_db": str(save_to_db), "frame_step": str(frame_step)}
+    if not video_url or not video_url.strip():
+        st.error("Please provide a valid video URL")
+        return None
         
-        with st.spinner("Procesando video desde URL... Esto puede tomar un tiempo..."):
+    # Prevent processing the same URL repeatedly
+    if st.session_state.get('last_processed_url') == video_url and st.session_state.get('processing'):
+        st.warning("Already processing this URL. Please wait...")
+        return None
+    
+    try:
+        st.session_state.processing = True
+        st.session_state.last_processed_url = video_url
+        
+        # Prepare data for URL processing
+        params = {
+            "url": video_url,
+            "save_to_db": save_to_db
+        }
+        if video_name:
+            params["video_name"] = video_name
+        
+        # Check if API is available
+        api_status, _ = check_api_status()
+        if not api_status:
+            st.error("API is not available. Please check if the backend is running.")
+            return None
+        
+        with st.spinner("🔄 Downloading and processing video... This may take a while."):
             response = requests.post(
-                url, 
-                data=data,
-                timeout=300  # 5 minute timeout
+                f"{API_BASE_URL}/api/video/process-url", 
+                params=params,
+                timeout=600  # 10 minute timeout for URL processing
             )
         
         if response.status_code == 200:
-            api_response = response.json()
-            result = {
-                'video_info': {
-                    'duration': api_response.get('summary', {}).get('duration_seconds', 0)
-                },
-                'processing_stats': {
-                    'total_frames_processed': api_response.get('summary', {}).get('total_frames', 0),
-                    'processing_time': api_response.get('metadata', {}).get('processing_time_seconds', 0),
-                    'avg_time_per_frame': 0.1  
-                },
-                'brand_analysis': {}
-            }
-            # Convertir análisis al formato esperado
-            for brand_data in api_response.get('summary', {}).get('brands_found', []):
-                brand_name = brand_data
-                brand_counts = api_response.get('summary', {}).get('brand_counts', {})
-                brand_screen_time = api_response.get('summary', {}).get('brand_screen_time', {})
-                
-                result['brand_analysis'][brand_name] = {
-                    'total_appearances': brand_counts.get(brand_name, 0),
-                    'total_time_seconds': brand_screen_time.get(brand_name, 0),
-                    'appearance_percentage': (brand_screen_time.get(brand_name, 0) / result['video_info']['duration']) * 100 if result['video_info']['duration'] > 0 else 0,
-                    'average_confidence': 0.7, 
-                    'max_confidence': 0.9  
-                }
-            
-            return result
-        else:
-            st.error(f"API Error: {response.status_code} - {response.text}")
+            st.success("✅ Video processed successfully!")
+            return response.json()
+        elif response.status_code == 503:
+            st.error("🚫 URL processing is temporarily unavailable. Please try uploading the video file directly.")
             return None
-    except Exception as e:
-        st.error(f"Error processing video: {e}")
+        else:
+            st.error(f"❌ API Error: {response.status_code} - {response.text}")
+            return None
+            
+    except requests.Timeout:
+        st.error("⏱️ Request timed out. The video might be too large or the server is busy.")
         return None
-    
+    except requests.ConnectionError:
+        st.error("🔌 Connection error. Please check if the backend server is running.")
+        return None
+    except Exception as e:
+        st.error(f"❌ Error processing video from URL: {str(e)}")
+        return None
+    finally:
+        st.session_state.processing = False
+
 def draw_detections_on_image(image, detections, original_shape, resized_shape):
     """Draw bounding boxes on image"""
     original_height, original_width = original_shape
@@ -270,28 +249,48 @@ def create_brand_analysis_charts(brand_analysis, video_duration):
     })
 
 def main():
+    # Clear any stale processing state on app start
+    if 'app_initialized' not in st.session_state:
+        st.session_state.processing = False
+        st.session_state.last_processed_url = ""
+        st.session_state.app_initialized = True
+    
     st.title("🎯 Brand Detection System")
     st.markdown("**Computer Vision powered brand detection in images and videos**")
     
     # Sidebar
     st.sidebar.header("🔧 Configuration")
     
-    # Check API status
-    api_status, api_info = check_api_status()
+    # Check API status with better error handling
+    try:
+        api_status, api_info = check_api_status()
+        st.session_state.api_status = api_status
+    except Exception as e:
+        st.sidebar.error(f"❌ API Check Failed: {str(e)}")
+        api_status = False
+        api_info = None
     
     if api_status:
         st.sidebar.success("✅ API Connected")
-        st.sidebar.json(api_info)
+        if api_info:
+            st.sidebar.json(api_info)
         
         # Get supported brands
-        brands = get_supported_brands()
-        if brands:
-            st.sidebar.subheader("🏷️ Supported Brands")
-            for brand in brands:
-                st.sidebar.write(f"• {brand['name']}")
+        try:
+            brands = get_supported_brands()
+            if brands:
+                st.sidebar.subheader("🏷️ Supported Brands")
+                for brand in brands:
+                    if isinstance(brand, dict) and 'name' in brand:
+                        st.sidebar.write(f"• {brand['name']}")
+                    else:
+                        st.sidebar.write(f"• {brand}")
+        except Exception as e:
+            st.sidebar.warning(f"Could not load brands: {str(e)}")
     else:
         st.sidebar.error("❌ API Disconnected")
-        st.error("Cannot connect to the API. Please ensure the backend is running.")
+        st.error("Cannot connect to the API. Please ensure the backend is running on http://localhost:8000")
+        st.info("💡 Try refreshing the page or check if the backend server is started.")
         return
     
     # Main content tabs
@@ -327,7 +326,7 @@ def main():
         # Opciones de entrada con mejor diseño
         st.markdown("### 🎯 Método de Entrada")
         input_method = st.radio(
-            "",
+            "Selecciona el método de entrada:",
             ["📁 Subir archivo", "🌐 URL de imagen"],
             key="input_method",
             horizontal=True,
@@ -599,7 +598,7 @@ def main():
         # Opciones de entrada para video
         st.markdown("### 🎯 Método de Entrada")
         video_input_method = st.radio(
-            "",
+            "Selecciona el método de entrada para video:",
             ["📁 Subir archivo de video", "🌐 URL de video"],
             key="video_input_method",
             horizontal=True,
@@ -642,33 +641,21 @@ def main():
                         st.write(f"**📁 Tamaño:** {file_size:.2f} MB")
                         st.write(f"**📝 Nombre:** {uploaded_video.name}")
                         
-
-                    st.markdown("#### ⚙️ Opciones de Procesamiento")
-                col_a, col_b = st.columns(2)
-                with col_a:
-                    save_to_db = st.checkbox("💾 Guardar análisis en BD", value=True)
-                with col_b:
-                    processing_intensity = st.radio(
-                        "Intensidad de análisis:", 
-                        ["Rápida (pocos frames)", "Normal", "Detallada (muchos frames)"],
-                        index=1,
-                        horizontal=True
-                    )
-                    
-                    # Convertir selección a valor frame_step
-                    frame_step = 60 if processing_intensity == "Rápida (pocos frames)" else 30 if processing_intensity == "Normal" else 15
-                analyze_button = st.button(
-                    "🎬 Analizar Video", 
-                    key="analyze_video_file",
-                    type="primary",
-                    use_container_width=True
-                )
-                
-                if analyze_button:
-                    uploaded_video.seek(0)
-                    with st.spinner("🔄 Procesando video... Esto puede tomar un tiempo..."):
-                        # Usar frame_step en la función
-                        results = detect_brands_in_video(uploaded_video, save_to_db, frame_step)
+                        # Checkbox para guardar en BD
+                        save_to_db = st.checkbox("💾 Guardar análisis en base de datos", value=True, key="save_video_file")
+                        
+                        # Botón de análisis
+                        analyze_button = st.button(
+                            "🎬 Analizar Video", 
+                            key="analyze_video_file",
+                            type="primary",
+                            use_container_width=True
+                        )
+                        
+                        if analyze_button:
+                            uploaded_video.seek(0)
+                            with st.spinner("🔄 Procesando video... Esto puede tomar un tiempo..."):
+                                results = detect_brands_in_video(uploaded_video, save_to_db)
                 
                 with col2:
                     st.markdown("#### 🎯 Resultados del Análisis")
@@ -699,16 +686,42 @@ def main():
                         st.markdown('</div>', unsafe_allow_html=True)
         
         else:  # URL de video
+            st.markdown("### 🌐 Procesamiento desde URL")
+            st.info("💡 Pega aquí la URL de tu video para procesarlo automáticamente")
+            
+            # Initialize URL session state
+            if 'video_url_input_field' not in st.session_state:
+                st.session_state.video_url_input_field = ""
+            
             video_url_input = st.text_input(
-                "🌐 Introduce la URL del video:",
-                placeholder="https://ejemplo.com/video.mp4",
-                key="video_url_input",
-                help="Introduce una URL válida de video (MP4, AVI, MOV, MKV)"
+                "Introduce la URL del video:",
+                value=st.session_state.get('video_url_input_field', ''),
+                placeholder="https://www.youtube.com/watch?v=ejemplo o https://ejemplo.com/video.mp4",
+                key="video_url_input_field",
+                help="Acepta URLs de YouTube, Vimeo, o enlaces directos a archivos de video",
+                max_chars=2000,
+                label_visibility="visible"
             )
             
-            if video_url_input:
+            # Show processing status
+            if st.session_state.get('processing', False):
+                st.warning("🔄 Processing video... Please wait and do not refresh the page.")
+                
+            # Reset button to clear URL and state
+            if st.button("🗑️ Clear URL", help="Clear the current URL and reset"):
+                st.session_state.video_url_input_field = ""
+                st.session_state.processing = False
+                st.session_state.last_processed_url = ""
+                st.rerun()
+            
+            if video_url_input and video_url_input.strip():
                 try:
-                    video_url = video_url_input
+                    video_url = video_url_input.strip()
+                    
+                    # Validate URL format
+                    if not (video_url.startswith('http://') or video_url.startswith('https://')):
+                        st.error("❌ Please enter a valid URL starting with http:// or https://")
+                        st.stop()
                     
                     # Mostrar información del video
                     st.divider()
@@ -728,22 +741,7 @@ def main():
                             st.markdown('</div>', unsafe_allow_html=True)
                             
                             # Checkbox para guardar en BD
-                            st.markdown("#### ⚙️ Opciones de Procesamiento")
-                            col_a, col_b = st.columns(2)
-                            with col_a:
-                                save_to_db = st.checkbox("💾 Guardar análisis en BD", value=True, key="save_video_url_db")
-                            with col_b:
-                                processing_intensity = st.radio(
-                                    "Intensidad de análisis:", 
-                                    ["Rápida (pocos frames)", "Normal", "Detallada (muchos frames)"],
-                                    index=1,
-                                    horizontal=True,
-                                    key="url_intensity"
-                                )
-                                
-                                # Convertir selección a valor frame_step
-                                frame_step = 60 if processing_intensity == "Rápida (pocos frames)" else 30 if processing_intensity == "Normal" else 15
-
+                            save_to_db = st.checkbox("💾 Guardar análisis en base de datos", value=True, key="save_video_url")
                             
                             # Botón de análisis
                             analyze_button = st.button(
@@ -755,33 +753,67 @@ def main():
                             
                             if analyze_button:
                                 with st.spinner("🔄 Procesando video... Esto puede tomar un tiempo..."):
-                                    results = detect_brands_in_video_url(video_url, save_to_db, frame_step)
+                                    # Process video from URL
+                                    video_results = detect_brands_in_video_url(
+                                        video_url=video_url,
+                                        save_to_db=save_to_db
+                                    )
+                                    
+                                    if video_results:
+                                        # Store results in session state for persistence
+                                        st.session_state.video_results = video_results
+                                        st.session_state.current_video_source = "url"
+                                        st.session_state.current_video_url = video_url
+                                        st.success("✅ ¡Video procesado exitosamente!")
+                                        st.rerun()
+                                    else:
+                                        st.error("❌ Error al procesar el video. Verifica que la URL sea válida.")
                     
                     with col2:
                         st.markdown("#### 🎯 Resultados del Análisis")
                         with st.container():
                             st.markdown('<div class="video-container">', unsafe_allow_html=True)
-                            if results:
-                                st.success("✅ ¡Análisis de video completado!")
+                            
+                            # Check if we have video results to display
+                            if hasattr(st.session_state, 'video_results') and st.session_state.video_results:
+                                video_results = st.session_state.video_results
                                 
-                                # Mostrar estadísticas básicas
-                                if results.get('video_info'):
-                                    st.write(f"**⏱️ Duración:** {results['video_info']['duration']:.1f}s")
+                                # Display summary statistics
+                                st.success("✅ Video procesado exitosamente")
                                 
-                                if results.get('processing_stats'):
-                                    st.write(f"**🎞️ Frames procesados:** {results['processing_stats']['total_frames_processed']}")
-                                    st.write(f"**⏱️ Tiempo de procesamiento:** {results['processing_stats']['processing_time']:.1f}s")
+                                stat_col1, stat_col2 = st.columns(2)
+                                with stat_col1:
+                                    # Handle brands_detected which might be a list or number
+                                    brands_detected = video_results.get('brands_detected', 0)
+                                    if isinstance(brands_detected, list):
+                                        brands_count = len(brands_detected)
+                                    else:
+                                        brands_count = brands_detected
+                                    
+                                    st.metric("🏷️ Marcas Detectadas", brands_count)
+                                    st.metric("⏱️ Tiempo de Procesamiento", f"{video_results.get('processing_time', 0):.1f}s")
+                                with stat_col2:
+                                    st.metric("🎞️ Frames Procesados", video_results.get('total_frames_processed', 0))
+                                    st.metric("� Total Detecciones", video_results.get('total_detections', 0))
                                 
-                                # Mostrar marcas detectadas
-                                if results.get('brand_analysis'):
-                                    st.markdown("**🏷️ Marcas detectadas:**")
-                                    for brand_name in results['brand_analysis'].keys():
-                                        st.write(f"• {brand_name.title()}")
-                                else:
-                                    st.warning("⚠️ No se detectaron marcas en este video")
+                                # Display brand statistics if available
+                                if video_results.get('brand_statistics'):
+                                    st.markdown("**🏷️ Marcas Encontradas:**")
+                                    for brand, count in video_results['brand_statistics'].items():
+                                        st.write(f"• {brand}: {count} detecciones")
+                                
+                                # Add button to clear results
+                                if st.button("🗑️ Limpiar Resultados", key="clear_url_results"):
+                                    if hasattr(st.session_state, 'video_results'):
+                                        del st.session_state.video_results
+                                    if hasattr(st.session_state, 'current_video_source'):
+                                        del st.session_state.current_video_source
+                                    if hasattr(st.session_state, 'current_video_url'):
+                                        del st.session_state.current_video_url
+                                    st.rerun()
                             else:
-                                st.info("👆 Haz clic en 'Analizar Video' para procesar")
-                                
+                                st.info("�👆 Haz clic en 'Analizar Video' para procesar")
+                            
                             st.markdown('</div>', unsafe_allow_html=True)
                             
                 except Exception as e:
@@ -828,53 +860,12 @@ def main():
             if results['brand_analysis']:
                 st.markdown("#### 🏷️ Resultados de Detección de Marcas")
                 
-                # Agregar tarjetas de resumen de marcas
-                st.markdown("##### 🏷️ Resumen de Marcas")
-                
-                # Crear una fila de tarjetas para cada marca
-                brand_cols = st.columns(min(3, len(results['brand_analysis'])))
-                
-                for idx, (brand_name, analysis) in enumerate(results['brand_analysis'].items()):
-                    col_idx = idx % len(brand_cols)
-                    with brand_cols[col_idx]:
-                        st.markdown(f"""
-                        <div style="padding: 10px; border-radius: 5px; border: 1px solid #ddd; background-color: white;">
-                            <h5 style="margin:0; color:#1E88E5;"><img src="https://img.icons8.com/color/24/000000/price-tag.png"/> {brand_name.title()}</h5>
-                            <p style="font-size:12px; margin:5px 0;">
-                                <span style="font-weight: bold;">Apariciones:</span> {analysis['total_appearances']}<br>
-                                <span style="font-weight: bold;">Tiempo:</span> {analysis['total_time_seconds']:.1f}s<br>
-                                <span style="font-weight: bold;">Porcentaje:</span> {analysis['appearance_percentage']:.1f}%
-                            </p>
-                        </div>
-                        """, unsafe_allow_html=True)
-                if len(results['brand_analysis']) > 0:
-                    st.markdown("##### ⏱️ Línea de Tiempo Simplificada")
-                    
-                    # Determinar la duración total
-                    duration = results['video_info']['duration']
-                    
-                    # Crear una visualización de timeline para cada marca
-                    for brand_name, analysis in results['brand_analysis'].items():
-                        # Estimar timestamps basados en apariciones y duración
-                        percentage = analysis['appearance_percentage'] / 100
-                        timeline_width = 300  # píxeles
-                        
-                        st.markdown(f"""
-                        <div style="margin-bottom: 10px;">
-                            <p style="margin-bottom: 5px;"><strong>{brand_name.title()}</strong></p>
-                            <div style="height: 20px; width: {timeline_width}px; background-color: #f0f0f0; border-radius: 3px; position: relative;">
-                                <div style="position: absolute; height: 20px; width: {percentage * timeline_width}px; background-color: #4CAF50; border-radius: 3px;"></div>
-                                <div style="position: absolute; width: 100%; text-align: center; line-height: 20px; color: black; font-size: 12px;">
-                                    {analysis['appearance_percentage']:.1f}%
-                                </div>
-                            </div>
-                        </div>
-                        """, unsafe_allow_html=True)
                 # Crear visualizaciones
                 fig, df = create_brand_analysis_charts(
                     results['brand_analysis'], 
                     results['video_info']['duration']
                 )
+                
                 if fig:
                     st.plotly_chart(fig, use_container_width=True)
                     
@@ -922,95 +913,12 @@ def main():
     
     with tab3:
         st.header("📊 Analytics Dashboard")
-    
-        # Buscar videos procesados anteriormente
-        st.markdown("### 🎬 Análisis de Videos Procesados")
-        
-        # Aquí podríamos añadir una función para obtener la lista de videos procesados
-        video_name = st.text_input(
-            "Nombre del video a analizar:",
-            placeholder="nombre_del_video.mp4",
-            help="Introduce el nombre exacto del video como se guardó en la base de datos"
-        )
-        
-        if video_name:
-            if st.button("🔍 Buscar Análisis"):
-                with st.spinner("Buscando análisis..."):
-                    analysis = get_video_analysis(video_name)
-                    
-                    if analysis:
-                        st.success(f"✅ Análisis encontrado para '{video_name}'")
-                        
-                        # Métricas básicas
-                        col1, col2, col3, col4 = st.columns(4)
-                        with col1:
-                            st.metric("⏱️ Duración", f"{analysis.get('video_duration_seconds', 0):.1f}s")
-                        with col2:
-                            st.metric("🎞️ Frames", analysis.get('total_frames_analyzed', 0))
-                        with col3:
-                            st.metric("🎯 Detecciones", analysis.get('total_detections', 0))
-                        with col4:
-                            st.metric("🏷️ Marcas", analysis.get('unique_brands_detected', 0))
-                        
-                        # Mostrar línea de tiempo de apariciones
-                        if analysis.get('analysis_summary'):
-                            st.markdown("### 📈 Línea Temporal de Aparición de Marcas")
-                            
-                            # Crear gráficos para cada marca
-                            for brand in analysis.get('analysis_summary', []):
-                                st.subheader(f"🏷️ {brand['brand_name'].title()}")
-                                
-                                # Métricas de la marca
-                                col_a, col_b, col_c = st.columns(3)
-                                with col_a:
-                                    st.metric("Tiempo en pantalla", f"{brand['appearance_time_seconds']:.1f}s")
-                                with col_b:
-                                    st.metric("% del video", f"{brand['screen_time_percentage']:.1f}%")
-                                with col_c:
-                                    st.metric("Confianza", f"{brand['avg_confidence']:.2f}")
-                                
-                                # Visualización de línea temporal
-                                fig = go.Figure()
-                                
-                                # Añadir rectángulos para cada segmento de tiempo
-                                for i, segment in enumerate(brand['appearance_timeline']):
-                                    fig.add_shape(
-                                        type="rect",
-                                        x0=segment['start'],
-                                        x1=segment['end'],
-                                        y0=0,
-                                        y1=1,
-                                        fillcolor="lightgreen",
-                                        opacity=0.5,
-                                        layer="below",
-                                        line_width=0,
-                                    )
-                                
-                                # Añadir línea de tiempo
-                                fig.update_layout(
-                                    title=f"Apariciones de {brand['brand_name'].title()}",
-                                    xaxis_title="Tiempo (segundos)",
-                                    yaxis=dict(showticklabels=False, showgrid=False),
-                                    height=200,
-                                    margin=dict(l=20, r=20, t=40, b=20),
-                                    showlegend=False
-                                )
-                                
-                                # Añadir marcador para la duración total del video
-                                fig.add_shape(
-                                    type="line",
-                                    x0=0,
-                                    x1=analysis.get('video_duration_seconds', 0),
-                                    y0=0,
-                                    y1=0,
-                                    line=dict(color="gray", width=3),
-                                )
-                                
-                                # Establecer el rango del eje x para mostrar todo el video
-                                fig.update_xaxes(range=[0, analysis.get('video_duration_seconds', 0)])
-                                
-                                st.plotly_chart(fig, use_container_width=True)
-                    else:
-                        st.error(f"❌ No se encontró análisis para '{video_name}'")
+        st.info("This section would show historical analytics from the database.")
+        st.markdown("**Features to implement:**")
+        st.markdown("- Historical detection trends")
+        st.markdown("- Brand popularity over time") 
+        st.markdown("- Video processing statistics")
+        st.markdown("- Model performance metrics")
+
 if __name__ == "__main__":
     main()

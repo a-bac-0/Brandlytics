@@ -31,3 +31,28 @@ app.include_router(huggingface_router, prefix="/api", tags=["huggingface"])
 @app.get("/")
 def read_root():
     return {"message": "Bienvenido a la API de Brandlytics"}
+
+
+@app.get("/brands")
+def get_supported_brands():
+    """Get list of brands that can be detected by the ModelM from HuggingFace."""
+    # Return the 3 brands detected by CV-Brandlytics/ModelM
+    try:
+        brand_list = ["coca cola", "nike", "starbucks"]
+        
+        return {
+            "brands": brand_list,
+            "total_brands": len(brand_list),
+            "models_count": 1,
+            "model_source": "CV-Brandlytics/ModelM",
+            "note": "Using single HuggingFace model for 3-brand detection"
+        }
+    except Exception as e:
+        # Fallback response if there's any error
+        return {
+            "brands": ["coca cola", "nike", "starbucks"],
+            "total_brands": 3,
+            "models_count": 1,
+            "model_source": "CV-Brandlytics/ModelM",
+            "note": "Using fallback brand list"
+        }
