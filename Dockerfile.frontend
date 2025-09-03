@@ -4,13 +4,8 @@ WORKDIR /app
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
+    libgl1 \
     libglib2.0-0 \
-    libsm6 \
-    libxext6 \
-    libxrender-dev \
-    libgomp1 \
-    libgl1-mesa-glx \
-    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies for frontend
@@ -19,7 +14,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy frontend code
 COPY frontend/ ./frontend/
-COPY src/ ./src/
+# COPY src/ ./src/
 COPY app/config/ ./app/config/
 
 ENV PYTHONPATH=/app
@@ -29,4 +24,4 @@ EXPOSE 8501
 HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8501/_stcore/health || exit 1
 
-CMD ["streamlit", "run", "frontend/streamlit_app.py", "--server.address", "0.0.0.0"]
+CMD ["streamlit", "run", "frontend/streamlit_app.py", "--server.port=8501", "--server.address=0.0.0.0"]

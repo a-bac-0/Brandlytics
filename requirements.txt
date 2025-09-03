@@ -31,3 +31,4 @@ ultralytics
 fastapi
 dotenv
 uvicorn
+plotly
