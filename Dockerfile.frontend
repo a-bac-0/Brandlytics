@@ -14,7 +14,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy frontend code
 COPY frontend/ ./frontend/
-# COPY src/ ./src/
 COPY app/config/ ./app/config/
 
 ENV PYTHONPATH=/app
