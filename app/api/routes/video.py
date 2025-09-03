@@ -457,15 +457,15 @@ async def process_video_from_url(
         )
         
         return VideoProcessingResponse(
-            success=True,
-            message="Video from URL processed successfully",
             video_name=video_name,
-            processing_time=result.get("processing_time", 0),
-            total_frames=result.get("total_frames", 0),
-            frames_processed=result.get("frames_processed", 0),
-            brands_detected=result.get("brands_detected", []),
-            detections=result.get("detections", []),
-            analytics=result.get("analytics", {})
+            status="completed",
+            processing_time=result['performance']['total_elapsed_seconds'],
+            total_frames_processed=result['performance']['processed_frames'],
+            brands_detected=result['summary']['brands_found'],
+            total_detections=result['summary']['total_detections'],
+            performance_metrics=result['performance'],
+            brand_statistics=result['brand_detections'],
+            metadata=result.get('metadata', {})
         )
         
     except subprocess.TimeoutExpired:
