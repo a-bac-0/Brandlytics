@@ -2,11 +2,7 @@ import streamlit as st
 import requests
 import cv2
 import numpy as np
-import tempfile
 import os
-from pathlib import Path
-import json
-import time
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
@@ -22,14 +18,16 @@ st.set_page_config(
 )
 
 # API Configuration
-API_BASE_URL = os.getenv("API_BASE_URL", "http://api:8000")
+API_BASE_URL = os.getenv("API_BASE_URL", "https://brandlytics.onrender.com")
 
 def check_api_status():
     """Check if API is running"""
     try:
-        response = requests.get(f"{API_BASE_URL}/")
+        print(f"DEBUG - Intentando conectar a: {API_BASE_URL}")
+        response = requests.get(f"{API_BASE_URL}/", verify=False, timeout=10)
         return response.status_code == 200, response.json()
-    except:
+    except Exception as e:
+        print(f"ERROR de conexión API: {str(e)}")
         return False, None
 
 def get_supported_brands():
