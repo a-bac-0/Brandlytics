@@ -16,6 +16,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY frontend/ ./frontend/
 COPY app/config/ ./app/config/
 
+RUN sed -i 's|API_BASE_URL = "http://api:8000"|API_BASE_URL = "https://brandlytics.onrender.com"|g' frontend/streamlit_app.py
+
 ENV PYTHONPATH=/app
 
 EXPOSE 8501
