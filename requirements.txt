@@ -1,29 +1,60 @@
+# Brandlytics - Brand Detection System Requirements
+# All dependencies organized by category
+
+# ================================
+# CORE MACHINE LEARNING & CV
+# ================================
 torch>=2.0.0
-torchvision>=0.15.0
-opencv-python>=4.8.0
 ultralytics>=8.0.0
-Pillow>=9.5.0
+opencv-python>=4.8.0
 numpy>=1.24.0
-pandas>=2.0.0
-matplotlib>=3.7.0
-seaborn>=0.12.0
-scikit-learn>=1.3.0
-streamlit>=1.28.0
-gradio>=3.50.0
+pillow>=10.0.0
+
+# ================================
+# WEB FRAMEWORK & API
+# ================================
 fastapi>=0.104.0
-uvicorn>=0.24.0
-sqlalchemy>=2.0.0
-psycopg2-binary>=2.9.0
+uvicorn[standard]>=0.24.0
+pydantic>=2.4.0
 python-multipart>=0.0.6
+plotly
+
+# ================================
+# DATABASE & STORAGE
+# ================================
+supabase>=1.0.0
+sqlalchemy>=2.0.0
+
+# ================================
+# CONFIGURATION & UTILITIES
+# ================================
 python-dotenv>=1.0.0
 tqdm>=4.66.0
-albumentations>=1.3.0
-wandb>=0.16.0
-pytest>=7.4.0
-black>=23.0.0
-flake8>=6.0.0
-pre-commit>=3.5.0
 
-labelImg  
-setuptools
-#Después iniciar poniendo en la terminal: labelImg
+# ================================
+# FRONTEND & DATA VISUALIZATION
+# ================================
+streamlit>=1.28.0
+pandas>=2.1.0
+matplotlib>=3.7.0
+seaborn>=0.12.0
+
+# ================================
+# HUGGING FACE INTEGRATION
+# ================================
+huggingface_hub>=0.17.0
+transformers>=4.34.0
+
+# ================================
+# DEVELOPMENT TOOLS (Optional)
+# ================================
+# Uncomment the following lines for development:
+# pytest>=7.4.0
+# black>=23.0.0
+# flake8>=6.0.0
+
+# ================================
+# INSTALLATION INSTRUCTIONS
+# ================================
+# Standard installation: pip install -r requirements.txt
+# Development setup: pip install -r requirements.txt (uncomment dev tools above)

@@ -1,34 +1,4 @@
-version: '3.8'
-
 services:
-  # PostgreSQL Database
-  postgres:
-    image: postgres:15-alpine
-    container_name: brand_detection_db
-    environment:
-      POSTGRES_DB: brand_detection
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: branddetection2024
-      POSTGRES_HOST_AUTH_METHOD: trust
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
-    ports:
-      - "5432:5432"
-    networks:
-      - brand_detection_network
-    restart: unless-stopped
-
-  # Redis for caching (optional)
-  redis:
-    image: redis:7-alpine
-    container_name: brand_detection_redis
-    ports:
-      - "6379:6379"
-    networks:
-      - brand_detection_network
-    restart: unless-stopped
-
   # Main API Application
   api:
     build:
@@ -36,13 +6,12 @@ services:
       dockerfile: Dockerfile
     container_name: brand_detection_api
     environment:
-      - DB_HOST=postgres
-      - DB_PORT=5432
-      - DB_NAME=brand_detection
-      - DB_USER=postgres
-      - DB_PASSWORD=branddetection2024
       - API_HOST=0.0.0.0
       - API_PORT=8000
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_KEY=${SUPABASE_KEY}
+      - BUCKET_CROPS=${BUCKET_CROPS:-crops}
+      - YOLO_MODEL_PATH=${MODEL_PATH:-models/best2.pt}
     ports:
       - "8000:8000"
     volumes:
@@ -50,11 +19,6 @@ services:
       - ./data:/app/data
       - ./logs:/app/logs
       - ./tmp:/app/tmp
-    depends_on:
-      - postgres
-      - redis
-    networks:
-      - brand_detection_network
     restart: unless-stopped
 
   # Streamlit Frontend
@@ -69,13 +33,8 @@ services:
       - "8501:8501"
     depends_on:
       - api
-    networks:
-      - brand_detection_network
     restart: unless-stopped
 
-volumes:
-  postgres_data:
-
 networks:
-  brand_detection_network:
+  default:
     driver: bridge
